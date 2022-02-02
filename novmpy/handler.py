@@ -958,20 +958,27 @@ class VMDiv(VMBase):
         self.name = 'vmp_div'
 
     def match(self):
-        if len(self.body) < 8:
+        if len(self.body) < 7:
             return False
         args = {}
         mh = MatchHelper(self.body, self.config)
         mh.reset()
-        # TODO:
-        if (mh.load_dword(4, {'reg': 'ph1'}) and
-            mh.load_dword(0, {'reg': 'ph2'}) and
-            mh.load_dword(8, {'reg': 'ph3'}) and
+        if (mh.load_byte(0, {'reg': 'ph1'}) and
+            mh.load_byte(2, {'reg': 'ph2'}) and
                 mh.batch([X86_INS_DIV]) and
-                mh.store_dword(bridge.size, {'reg': 'ph2'}) and
-                mh.store_dword(bridge.size+4, {'reg': 'ph1'}) and
+                mh.store_word(bridge.size, {'reg': 'ph1'}) and
                 mh.store_eflags()):
-            self.opsize = 4
+            self.opsize = 1
+            return True
+        mh.reset()
+        if (mh.load(None, {'reg': 'ph1','size':'size'}) and
+            mh.load(0, {'reg': 'ph2'}) and
+            mh.load(None, {'reg': 'ph3'}) and
+                mh.batch([X86_INS_DIV]) and
+                mh.store(bridge.size, {'reg': 'ph2'}) and
+                mh.store(bridge.size+mh.get_ph('size'), {'reg': 'ph1'}) and
+                mh.store_eflags()):
+            self.opsize = mh.get_ph('size')
             return True
         return False
 
@@ -1023,20 +1030,27 @@ class VMIdiv(VMBase):
         self.name = 'vmp_idiv'
 
     def match(self):
-        if len(self.body) < 8:
+        if len(self.body) < 7:
             return False
         args = {}
         mh = MatchHelper(self.body, self.config)
         mh.reset()
-        # TODO:
-        if (mh.load_dword(4, {'reg': 'ph1'}) and
-            mh.load_dword(0, {'reg': 'ph2'}) and
-            mh.load_dword(8, {'reg': 'ph3'}) and
+        if (mh.load_byte(0, {'reg': 'ph1'}) and
+            mh.load_byte(2, {'reg': 'ph2'}) and
                 mh.batch([X86_INS_IDIV]) and
-                mh.store_dword(bridge.size, {'reg': 'ph2'}) and
-                mh.store_dword(bridge.size+4, {'reg': 'ph1'}) and
+                mh.store_word(bridge.size, {'reg': 'ph1'}) and
                 mh.store_eflags()):
-            self.opsize = 4
+            self.opsize = 1
+            return True
+        mh.reset()
+        if (mh.load(None, {'reg': 'ph1','size':'size'}) and
+            mh.load(0, {'reg': 'ph2'}) and
+            mh.load(None, {'reg': 'ph3'}) and
+                mh.batch([X86_INS_IDIV]) and
+                mh.store(bridge.size, {'reg': 'ph2'}) and
+                mh.store(bridge.size+mh.get_ph('size'), {'reg': 'ph1'}) and
+                mh.store_eflags()):
+            self.opsize = mh.get_ph('size')
             return True
         return False
 

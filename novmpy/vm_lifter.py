@@ -158,22 +158,31 @@ class VMLifter:
 
                 fix_constant_pool(block)
 
-                flag = vtil.optimizer.aux.branch_analysis_flags(
-                    cross_block=True, pack=True)
+                flag = vtil.optimizer.aux.branch_analysis_flags(pack=True)
                 tracer = vtil.tracer()
                 branch_info = vtil.optimizer.aux.analyze_branch(
                     block, tracer, flag)
 
                 print(f"CC {branch_info.cc}")
                 print(f"VJMP {branch_info.destinations}")
+
+                def eval_base_remove(uid):
+                    var = uid.get_variable()
+                    if var.is_register() and var.reg().is_image_base():
+                        return 0
+                    return None
+
                 targets = []
                 for branch in branch_info.destinations:
                     if not branch.is_constant():
                         branch = tracer.rtrace_pexp(branch)
-                        # branch.rhs.is_identical(vtil.symbolic.variable(vtil.REG_IMGBASE).to_expression())
-                        # assert branch.is_constant()
-                        if not branch.is_constant():
-                            break
+                    if not branch.is_constant():
+                        res = branch.evaluate(eval_base_remove)
+                        if res.is_known():
+                            targets.append(res.get_uint64())
+                            continue
+                    if not branch.is_constant():
+                        continue
                     print(f'Exploring branch => {branch}')
                     targets.append(branch.get_uint64())
                 for target in targets:
