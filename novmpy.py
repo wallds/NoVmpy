@@ -7,7 +7,6 @@ sys.stdout.encoding = 'utf-8'
 # for test
 # ida_loader.load_plugin('F:/NoVmpy/novmpy.py')
 import idaapi
-from novmpy.ui import UIManager
 
 NOVMPY_VERSION = "0.1"
 
@@ -23,6 +22,7 @@ class NoVmpyPlugin(idaapi.plugin_t):
         super(NoVmpyPlugin, self).__init__()
 
     def init(self):
+        from novmpy.ui import UIManager
         self.ui = UIManager()
 
         return idaapi.PLUGIN_KEEP
