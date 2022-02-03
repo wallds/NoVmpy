@@ -227,6 +227,14 @@ def instruction_tostring(ins: vtil.instruction):
     return s
 
 
+def remove_suffix(_s: str, _suffix: str):
+    # polyfill with Python 3.9- : str.removesuffix
+    try:
+        return _s.removesuffix(_suffix)
+    except AttributeError:
+        return _s[:-len(_suffix)] if _suffix and _s.endswith(_suffix) else _s
+    
+
 class MyGraph(ida_graph.GraphViewer):
     def __init__(self, title):
         self.list_vip = []
@@ -264,7 +272,7 @@ class MyGraph(ida_graph.GraphViewer):
                     s += ida_lines.COLSTR(_prefix, ida_lines.SCOLOR_PREFIX)
                 s += instruction_tostring(i)+'\n'
             color = self.color
-            self.AddNode((s.removesuffix('\n'), color))
+            self.AddNode((remove_suffix(s, '\n'), color))
             self.list_vip.append(vip)
 
         for vip, b in self.rtn.explored_blocks.items():
