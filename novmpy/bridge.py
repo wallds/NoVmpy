@@ -40,7 +40,9 @@ class BridgeBase:
         return self.md.disasm(code, offset, count)
 
     def disasm_one(self, offset):
-        return self.md.disasm(bridge.get_bytes(offset, 20), offset, 1)
+        for x in self.md.disasm(self.get_bytes(offset, 20), offset, 1):
+            return x
+        return None
 
     def reg_name(self, reg_id, default=None):
         return self.md.reg_name(reg_id, default)
@@ -155,6 +157,6 @@ bridge = None
 
 if local_mode:
     bridge = BridgeLocal(
-        r'F:\VMP_Sample\Sample_vmp3.4\test_invoke64\1.vmp.exe')
+        r'F:\VMP_Sample\Sample_vmp3.4\test_misc\test_misc.x86.vmp.exe')
 else:
     bridge = BridgeIda()

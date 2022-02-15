@@ -127,12 +127,13 @@ class VMLifter:
             if block is None:
                 return None
             tmp_state = state
+        # Messages cannot be updated frequently, which can slow down performance.
+        bridge.update_msg(f'lifting {block.entry_vip:08X}')
         while True:
             h = handler.factory(tmp_state.current_handler, tmp_state.config)
             if h is None:
                 break
             i: handler.VMIns = h.get_instr(tmp_state)
-            bridge.update_msg(f'lifting {i}')
             print(block.sp_offset, i)
             block.label_begin(i.address)
             h.generator(i, block)
@@ -217,12 +218,12 @@ class VMLifter:
                 stack_0 = vtil.symbolic.variable(
                     block.owner.entry_point.begin(), vtil.REG_SP).to_expression()
                 stack_1 = tracer.rtrace_p(vtil.symbolic.variable(
-                    block.end().prev(), vtil.REG_SP)) + block.sp_offset
+                    block.end().prev(), vtil.REG_SP)) + vtil.symbolic.expression(block.sp_offset, vtil.arch.bit_count)
                 offset = stack_1 - stack_0
                 print(f'sp offset => {offset}')
                 if offset.is_constant() and offset.get_int() < 0:
                     mem = vtil.symbolic.variable.memory_t(tracer(vtil.symbolic.variable(
-                        block.end().prev(), vtil.REG_SP)) + block.sp_offset, vtil.arch.bit_count)
+                        block.end().prev(), vtil.REG_SP)) + vtil.symbolic.expression(block.sp_offset, vtil.arch.bit_count), vtil.arch.bit_count)
                     var = vtil.symbolic.variable(block.end().prev(), mem)
                     base_exp = vtil.symbolic.variable(
                         vtil.REG_IMGBASE).to_expression()
@@ -256,16 +257,16 @@ class VMLifter:
                         exit_destination.get_uint())
 
                     for _ins in rage[:-2]:
-                        if _ins.id == X86_INS_PUSHFQ:
+                        if _ins.id in [X86_INS_PUSHFD, X86_INS_PUSHFQ]:
                             block.pushf()
                             continue
-                        elif _ins.id == X86_INS_POPFQ:
+                        elif _ins.id == [X86_INS_POPFD, X86_INS_POPFQ]:
                             block.popf()
                             continue
                         reads, writes = _ins.regs_access()
                         for reg_read in reads:
                             op = vtil.x86_reg(reg_read)
-                            if reg_read == X86_REG_RSP:
+                            if reg_read in [X86_REG_ESP, X86_REG_RSP]:
                                 op = vtil.REG_SP
                             if reg_read == X86_REG_EFLAGS:
                                 op = vtil.REG_FLAGS
@@ -274,7 +275,7 @@ class VMLifter:
                             block.vemit(vtil.make_uint(b, 8))
                         for reg_write in writes:
                             op = vtil.x86_reg(reg_write)
-                            assert reg_write != X86_REG_RSP
+                            assert reg_write not in [X86_REG_ESP, X86_REG_RSP]
                             if reg_write == X86_REG_EFLAGS:
                                 op = vtil.REG_FLAGS
                             block.vpinw(op)

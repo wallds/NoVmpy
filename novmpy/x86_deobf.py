@@ -22,10 +22,9 @@ def shit_disasm(ea, max_insn_count=-1, term_call_imm=False):
         if addr in walk:
             break
         walk[addr] = True
-        a = [i for i in bridge.disasm_one(addr)]
-        if len(a) == 0:
+        insn: CsInsn = bridge.disasm_one(addr)
+        if insn is None:
             break
-        insn: CsInsn = a[0]
         if insn.id == X86_INS_INVALID:
             break
         if max_insn_count > 0 and insn_count >= max_insn_count:

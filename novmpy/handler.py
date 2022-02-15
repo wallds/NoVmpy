@@ -15,6 +15,16 @@ FLAG_SF = vtil.REG_FLAGS.select(1, 7)
 FLAG_DF = vtil.REG_FLAGS.select(1, 10)
 FLAG_OF = vtil.REG_FLAGS.select(1, 11)
 
+if vtil.arch.size == 4:
+    ZAX = vtil.x86_reg.EAX
+    ZBX = vtil.x86_reg.EBX
+    ZCX = vtil.x86_reg.ECX
+    ZDX = vtil.x86_reg.EDX
+else:
+    ZAX = vtil.x86_reg.RAX
+    ZBX = vtil.x86_reg.RBX
+    ZCX = vtil.x86_reg.RCX
+    ZDX = vtil.x86_reg.RDX
 
 def make_virtual_register(context_offset, size):
     return vtil.register_desc(vtil.register_virtual,
@@ -567,8 +577,8 @@ class VMStr(VMBase):
         block.pop(t1)
         if self.segment == X86_PREFIX_GS:
             block.vemits("mov rax, gs:0x30")
-            block.vpinw(vtil.x86_reg.RAX)
-            block.add(t0, vtil.x86_reg.RAX)
+            block.vpinw(ZAX)
+            block.add(t0, ZAX)
             pass
         elif self.segment == X86_PREFIX_FS:
             assert False
@@ -612,8 +622,8 @@ class VMLdr(VMBase):
         block.pop(t0)
         if self.segment == X86_PREFIX_GS:
             block.vemits("mov rax, gs:0x30")
-            block.vpinw(vtil.x86_reg.RAX)
-            block.add(t0, vtil.x86_reg.RAX)
+            block.vpinw(ZAX)
+            block.add(t0, ZAX)
             pass
         elif self.segment == X86_PREFIX_FS:
             pass
@@ -1125,8 +1135,8 @@ class VMRdtsc(VMBase):
 
     def generator(self, ins: VMIns, block: vtil.basic_block):
         block.vemits('rdtsc')
-        block.vpinw(vtil.x86_reg.RDX)
-        block.vpinw(vtil.x86_reg.RAX)
+        block.vpinw(ZDX)
+        block.vpinw(ZAX)
 
         block.push(vtil.x86_reg.EAX)
         block.push(vtil.x86_reg.EDX)
@@ -1162,13 +1172,13 @@ class VMCpuid(VMBase):
         return i
 
     def generator(self, ins: VMIns, block: vtil.basic_block):
-        block.vpinr(vtil.x86_reg.RCX)
-        block.vpinr(vtil.x86_reg.RAX)
+        block.vpinr(ZCX)
+        block.vpinr(ZAX)
         block.vemits('cpuid')
-        block.vpinw(vtil.x86_reg.RDX)
-        block.vpinw(vtil.x86_reg.RCX)
-        block.vpinw(vtil.x86_reg.RBX)
-        block.vpinw(vtil.x86_reg.RAX)
+        block.vpinw(ZDX)
+        block.vpinw(ZCX)
+        block.vpinw(ZBX)
+        block.vpinw(ZAX)
 
         block.push(vtil.x86_reg.EAX)
         block.push(vtil.x86_reg.EBX)
@@ -1441,16 +1451,20 @@ class VMUnknown(VMBase):
             insn: CsInsn
             regs_read, regs_write = insn.regs_access()
             if self.config.reg_ip in regs_write:
+                # lea vm_ip, [vm_ip+disp]
                 if instr_match(insn, X86_INS_LEA, [X86_OP_REG, X86_OP_MEM], [self.config.reg_ip, {'base': self.config.reg_ip, 'index': X86_REG_INVALID, 'scale': 1}]):
                     n += insn.operands[1].mem.disp
+                # add vm_ip, imm
                 elif instr_match(insn, X86_INS_ADD, [X86_OP_REG, X86_OP_IMM], [self.config.reg_ip]):
                     n += insn.operands[1].imm
+                # sub vm_ip, imm
                 elif instr_match(insn, X86_INS_SUB, [X86_OP_REG, X86_OP_IMM], [self.config.reg_ip]):
                     n -= insn.operands[1].imm
                 elif instr_match(insn, X86_INS_LODSD):
                     n += 4
                 elif instr_match(insn, X86_INS_LODSQ):
                     n += 8
+                # mov vm_ip, vm_ip
                 elif instr_match(insn, X86_INS_MOV, [X86_OP_REG, X86_OP_REG], [self.config.reg_ip, self.config.reg_ip]):
                     n += 0
                 else:
