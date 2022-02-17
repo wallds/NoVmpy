@@ -36,14 +36,15 @@ def shit_disasm(ea, max_insn_count=-1, term_call_imm=False):
                 branches.append(op1.imm)
                 branches.append(addr+insn.size)
             # jmp imm
-            if insn.id == X86_INS_JMP and op1.type == X86_OP_IMM:
-                addr = op1.imm
-                continue
-            # jmp reg
-            elif insn.id == X86_INS_JMP and op1.type == X86_OP_REG:
-                bb.append(insn)
-                insn_count += 1
-                break
+            if insn.id == X86_INS_JMP:
+                if op1.type == X86_OP_IMM:
+                    addr = op1.imm
+                    continue
+                # jmp reg | jmp [mem]
+                else:
+                    bb.append(insn)
+                    insn_count += 1
+                    break
         bb.append(insn)
         insn_count += 1
         if insn.group(X86_GRP_RET):
@@ -173,12 +174,9 @@ dict_regs = {
 }
 
 
-class RegFlag64:
+class Taint64:
     def __init__(self):
-        self._reg_flags = {}
-        for i in map_reg:
-            self._reg_flags[i[0]] = 0
-        self._reg_flags[X86_REG_EFLAGS] = 0
+        self._taint = {}
 
     def set_(self, reg):
         return self.or_(reg, get_mask(64))
@@ -207,10 +205,14 @@ class RegFlag64:
             ignore_reg = True
         if not ignore_reg:
             regs_read, regs_write = insn.regs_access()
-            for i in regs_write:
-                if i == X86_REG_EFLAGS:
+            for w in regs_write:
+                if w == X86_REG_EFLAGS:
                     continue
-                if not self.set_(i):
+                if bridge.is64bit():
+                    base, off, bits = self.get_info(w)
+                    if off == 0 and bits == 32:
+                        w = base
+                if not self.set_(w):
                     result = False
         if insn.group(X86_GRP_FPU):
             result = False
@@ -221,7 +223,6 @@ class RegFlag64:
                     shift, set_flags, test_flags = v
                     if eflags & set_flags:
                         self.or_(X86_REG_EFLAGS, shift)
-
         return result
 
     def get_info(self, reg):
@@ -233,23 +234,23 @@ class RegFlag64:
         base, off, bits = self.get_info(reg)
         if base == X86_REG_INVALID:
             return False
-        self._reg_flags[base] |= (value & get_mask(bits)) << off
+        self._taint[base] = self._taint.get(
+            base, 0) | (value & get_mask(bits)) << off
         return True
 
     def and_(self, reg, value):
         base, off, bits = self.get_info(reg)
         if base == X86_REG_INVALID:
             return False
-        self._reg_flags[base] &= (
-            (value | (~get_mask(bits))) << off) | (get_mask(off))
+        self._taint[base] = self._taint.get(base, 0) & (
+            ((value | (~get_mask(bits))) << off) | get_mask(off))
         return True
 
     def fetch(self, reg):
         base, off, bits = self.get_info(reg)
         if base == X86_REG_INVALID:
             return 0
-        v = self._reg_flags[base]
-        return (v >> (off)) & get_mask(bits)
+        return (self._taint.get(base, 0) >> off) & get_mask(bits)
 
     def check_read(self, insn: CsInsn):
         regs_read, regs_write = insn.regs_access()
@@ -264,44 +265,32 @@ class RegFlag64:
                 value = self.fetch(X86_REG_EFLAGS)
                 for k, v in MASK_EFLAGS_SHIFT.items():
                     shift, set_flags, test_flags = v
-                    if eflags & test_flags:
-                        if value & shift:
-                            return False
-
+                    if (eflags & test_flags) and (value & shift):
+                        return False
         return True
 
     def empty(self):
         flag = 0
-        m = get_mask(32)
-        for k, v in self._reg_flags.items():
+        m = get_mask(bridge.size*8)
+        for k, v in self._taint.items():
             flag |= v & m
         return flag == 0
 
     def check(self, rf, reg):
         v = self.fetch(reg)
         if v != 0:
-            v2 = rf.fetch(reg)
-            self.and_(reg, ~v2)
+            self.and_(reg, ~rf.fetch(reg))
 
-    def check_overwrite(self, insn, rf):
-        self.check(rf, X86_REG_RAX)
-        self.check(rf, X86_REG_RBX)
-        self.check(rf, X86_REG_RCX)
-        self.check(rf, X86_REG_RDX)
-        self.check(rf, X86_REG_RSI)
-        self.check(rf, X86_REG_RDI)
-        self.check(rf, X86_REG_RSP)
-        self.check(rf, X86_REG_RBP)
-        self.check(rf, X86_REG_R8)
-        self.check(rf, X86_REG_R9)
-        self.check(rf, X86_REG_R10)
-        self.check(rf, X86_REG_R11)
-        self.check(rf, X86_REG_R12)
-        self.check(rf, X86_REG_R13)
-        self.check(rf, X86_REG_R14)
-        self.check(rf, X86_REG_R15)
-        self.check(rf, X86_REG_EFLAGS)
-
+    def check_overwrite(self, rf):
+        regs = [
+            X86_REG_RAX, X86_REG_RBX, X86_REG_RCX, X86_REG_RDX,
+            X86_REG_RSI, X86_REG_RDI, X86_REG_RSP, X86_REG_RBP,
+            X86_REG_R8, X86_REG_R9, X86_REG_R10, X86_REG_R11,
+            X86_REG_R12, X86_REG_R13, X86_REG_R14, X86_REG_R15,
+            X86_REG_EFLAGS
+        ]
+        for r in regs:
+            self.check(rf, r)
         return self.empty()
 
 
@@ -311,35 +300,32 @@ def x86_deobfusctor(insn_array, dump=False):
         return insn_array
     new_array = []
     useless = [False]*len(insn_array)
-    flags = [RegFlag64() for i in insn_array]
+    taints = [Taint64() for i in insn_array]
     for i in reversed(range(0, len(insn_array))):
-        if insn_array[i].id == X86_INS_NOP:
+        insn: CsInsn = insn_array[i]
+        if insn.id == X86_INS_NOP:
             useless[i] = True
-        if len(insn_array[i].regs_access()[1]) == 0:
+        reg_read, reg_write = insn.regs_access()
+        if len(reg_write) == 0:
             continue
-        if insn_array[i].id == X86_INS_XCHG or insn_array[i].id == X86_INS_MOV or insn_array[i].group(X86_GRP_CMOV):
-            op1 = insn_array[i].operands[0]
-            op2 = insn_array[i].operands[1]
+        if insn.id == X86_INS_XCHG or insn.id == X86_INS_MOV or insn.group(X86_GRP_CMOV):
+            op1, op2 = insn.operands
             if op1.type == op2.type and op1.size == op2.size and op1.reg == op2.reg:
-                useless[i] = True
-        if (not flags[i].update(insn_array[i])) or flags[i].empty():
+                if (not bridge.is64bit()) or op1.size == bridge.size or op1.size < 4:
+                    useless[i] = True
+        if (not taints[i].update(insn)) or taints[i].empty():
             continue
-        if insn_array[i].id == X86_INS_CALL:
+        # skip call or memory access instruction
+        if insn.id == X86_INS_CALL or insn.op_count(CS_OP_MEM) > 0:
             continue
-        if len(insn_array[i].operands) > 1:
-            op1 = insn_array[i].operands[0]
-            if op1.type == CS_OP_MEM:
-                continue
-        flag = copy.deepcopy(flags[i])
+        taint = copy.deepcopy(taints[i])
         for j in range(i+1, len(insn_array)):
             if useless[j]:
                 continue
-            insn: CsInsn = insn_array[j]
-            if not flag.check_read(insn):
+            if not taint.check_read(insn_array[j]):
                 break
-            # [i] mov al, bl
-            # [i+n] mov eax, 0;  al<----eax
-            if len(insn.regs_access()[1]) > 0 and flag.check_overwrite(insn, flags[j]):
+            reg_read, reg_write = insn_array[j].regs_access()
+            if reg_write and taint.check_overwrite(taints[j]):
                 useless[i] = True
                 break
 
@@ -412,7 +398,3 @@ def get_reg64(reg):
 def dump_insns(insns):
     for i in insns:
         print(i)
-
-
-if __name__ == '__main__':
-    pass
