@@ -10,6 +10,9 @@ import ida_dbg
 import ida_graph
 import ida_kernwin
 import ida_ida
+import ida_name
+from ida_nalt import get_str_type
+from ida_bytes import is_strlit, get_flags, get_strlit_contents
 
 from pyvtil import *
 from novmpy.vm_lifter import VMLifter
@@ -26,10 +29,10 @@ class _base_graph_action_handler_t(ida_kernwin.action_handler_t):
         return ida_kernwin.AST_ENABLE_FOR_WIDGET
 
 
-class GraphCloser(_base_graph_action_handler_t):
+class GraphRefresh(_base_graph_action_handler_t):
     def activate(self, ctx):
-        print('close graph:', self.graph)
-        self.graph.Close()
+        print('Refresh graph:', self.graph)
+        self.graph.Refresh()
 
 
 class GraphTrace(_base_graph_action_handler_t):
@@ -214,8 +217,8 @@ def instruction_tostring(ins: vtil.instruction):
         s += ida_lines.COLSTR('+', ida_lines.SCOLOR_SYMBOL)
         s += opstr[2]
         s += ida_lines.COLSTR(']', ida_lines.SCOLOR_SYMBOL)
-
     else:
+        imm = 0
         for i, op in enumerate(ins.operands):
             # chr(cvar.COLOR_ADDR+i+1)
             color = ida_lines.SCOLOR_DNUM
@@ -224,6 +227,15 @@ def instruction_tostring(ins: vtil.instruction):
             s += ida_lines.COLSTR(f'{str(op)}', color)
             if i+1 != len(ins.operands):
                 s += ida_lines.COLSTR(', ', ida_lines.SCOLOR_SYMBOL)
+            if op.is_immediate() and op.imm().ival > imm:
+                imm = op.imm().ival
+        name = ''
+        if is_strlit(get_flags(imm)):
+            name = str(get_strlit_contents(imm, -1, get_str_type(imm))[:20])
+        else:
+            name = ida_name.get_name(imm)
+        if name:
+            s += ida_lines.COLSTR(' ; '+name, ida_lines.SCOLOR_AUTOCMT)
     return s
 
 
@@ -233,7 +245,7 @@ def remove_suffix(_s: str, _suffix: str):
         return _s.removesuffix(_suffix)
     except AttributeError:
         return _s[:-len(_suffix)] if _suffix and _s.endswith(_suffix) else _s
-    
+
 
 class MyGraph(ida_graph.GraphViewer):
     def __init__(self, title):
@@ -300,7 +312,7 @@ class MyGraph(ida_graph.GraphViewer):
 
     def OnPopup(self, form, popup_handle):
         popup = collections.OrderedDict({
-            'Close': GraphCloser(self),
+            'Refresh': GraphRefresh(self),
             'apply_all_profiled': GraphApplyAllProfiled(self),
             'Trace': GraphTrace(self),
             'Erase': GraphErase(self),
