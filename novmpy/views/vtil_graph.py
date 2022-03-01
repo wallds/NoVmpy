@@ -182,6 +182,7 @@ dict_cond = {
 def instruction_tostring(ins: vtil.instruction):
     # @https://github.com/vtil-project/VTIL-BinaryNinja/blob/master/vtil/vtil.py
     s = ''
+    comment = ''
     s += ida_lines.COLSTR(f'{ins.base.to_string(ins.access_size()):6}',
                           ida_lines.SCOLOR_INSN)
     s += ' '
@@ -209,7 +210,6 @@ def instruction_tostring(ins: vtil.instruction):
         s += ida_lines.COLSTR('], ', ida_lines.SCOLOR_SYMBOL) + opstr[2]
     elif ins.base.name == 'ldd':
         # op0, [op1, op2]
-        # how to auto replace?
         s += opstr[0]
         s += ida_lines.COLSTR(', ', ida_lines.SCOLOR_SYMBOL)
         s += ida_lines.COLSTR('[', ida_lines.SCOLOR_SYMBOL)
@@ -218,7 +218,6 @@ def instruction_tostring(ins: vtil.instruction):
         s += opstr[2]
         s += ida_lines.COLSTR(']', ida_lines.SCOLOR_SYMBOL)
     else:
-        imm = 0
         for i, op in enumerate(ins.operands):
             # chr(cvar.COLOR_ADDR+i+1)
             color = ida_lines.SCOLOR_DNUM
@@ -227,15 +226,18 @@ def instruction_tostring(ins: vtil.instruction):
             s += ida_lines.COLSTR(f'{str(op)}', color)
             if i+1 != len(ins.operands):
                 s += ida_lines.COLSTR(', ', ida_lines.SCOLOR_SYMBOL)
-            if op.is_immediate() and op.imm().ival > imm:
-                imm = op.imm().ival
-        name = ''
+    imm = 0
+    for i, op in enumerate(ins.operands):
+        if op.is_immediate() and op.imm().ival > imm:
+            imm = op.imm().ival
+    if imm > 0:
         if is_strlit(get_flags(imm)):
-            name = str(get_strlit_contents(imm, -1, get_str_type(imm))[:20])
+            content = get_strlit_contents(imm, -1, get_str_type(imm))
+            comment += str(content[:30])
         else:
-            name = ida_name.get_name(imm)
-        if name:
-            s += ida_lines.COLSTR(' ; '+name, ida_lines.SCOLOR_AUTOCMT)
+            comment += ida_name.get_name(imm)
+    if comment:
+        s += ida_lines.COLSTR(' ; '+comment, ida_lines.SCOLOR_AUTOCMT)
     return s
 
 
