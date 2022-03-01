@@ -26,6 +26,7 @@ else:
     ZCX = vtil.x86_reg.RCX
     ZDX = vtil.x86_reg.RDX
 
+
 def make_virtual_register(context_offset, size):
     return vtil.register_desc(vtil.register_virtual,
                               int(context_offset//vtil.arch.size),
@@ -961,7 +962,6 @@ class VMImul(VMBase):
             block.pushf()
 
 
-
 class VMDiv(VMBase):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -981,7 +981,7 @@ class VMDiv(VMBase):
             self.opsize = 1
             return True
         mh.reset()
-        if (mh.load(None, {'reg': 'ph1','size':'size'}) and
+        if (mh.load(None, {'reg': 'ph1', 'size': 'size'}) and
             mh.load(0, {'reg': 'ph2'}) and
             mh.load(None, {'reg': 'ph3'}) and
                 mh.batch([X86_INS_DIV]) and
@@ -1053,7 +1053,7 @@ class VMIdiv(VMBase):
             self.opsize = 1
             return True
         mh.reset()
-        if (mh.load(None, {'reg': 'ph1','size':'size'}) and
+        if (mh.load(None, {'reg': 'ph1', 'size': 'size'}) and
             mh.load(0, {'reg': 'ph2'}) and
             mh.load(None, {'reg': 'ph3'}) and
                 mh.batch([X86_INS_IDIV]) and
@@ -1184,6 +1184,76 @@ class VMCpuid(VMBase):
         block.push(vtil.x86_reg.EBX)
         block.push(vtil.x86_reg.ECX)
         block.push(vtil.x86_reg.EDX)
+
+
+class VMPushCRX(VMBase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.name = 'vmp_push_crx'
+        self.cr = X86_REG_INVALID
+
+    def match(self):
+        if len(self.body) > 4:
+            return False
+        mh = MatchHelper(self.body, self.config)
+        for cr in [X86_REG_CR0, X86_REG_CR2, X86_REG_CR3, X86_REG_CR4, X86_REG_CR8]:
+            mh.reset()
+            if mh.match(X86_INS_MOV, [X86_OP_REG, X86_OP_REG], [None, cr]) and mh.store(0):
+                self.cr = cr
+                self.name = f'vmp_push_{bridge.reg_name(self.cr)}'
+                return True
+        return False
+
+    def get_instr(self, vmstate: VMState):
+        i = VMIns()
+        i.haddr = self.address
+        i.id = VM_INS_PUSH_CRX
+        i.address = vmstate.ip-vmstate.config.dir*4
+        i.mne = f'push_{bridge.reg_name(self.cr)}'
+        i.opstr = ''
+        i.data = 0
+        i.opsize = self.opsize
+        return i
+
+    def generator(self, ins: VMIns, block: vtil.basic_block):
+        block.vemits(f'mov {bridge.reg_name(ZAX)}, {bridge.reg_name(self.cr)}')
+        block.vpinw(ZAX)
+        block.push(ZAX)
+
+
+class VMPopCRX(VMBase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.name = 'vmp_pop_crx'
+        self.cr = X86_REG_INVALID
+
+    def match(self):
+        if len(self.body) > 4:
+            return False
+        mh = MatchHelper(self.body, self.config)
+        for cr in [X86_REG_CR0, X86_REG_CR2, X86_REG_CR3, X86_REG_CR4, X86_REG_CR8]:
+            mh.reset()
+            if mh.load(0) and mh.match(X86_INS_MOV, [X86_OP_REG, X86_OP_REG], [cr, None]):
+                self.cr = cr
+                self.name = f'vmp_pop_{bridge.reg_name(self.cr)}'
+                return True
+        return False
+
+    def get_instr(self, vmstate: VMState):
+        i = VMIns()
+        i.haddr = self.address
+        i.id = VM_INS_POP_CRX
+        i.address = vmstate.ip-vmstate.config.dir*4
+        i.mne = f'pop_{bridge.reg_name(self.cr)}'
+        i.opstr = ''
+        i.data = 0
+        i.opsize = self.opsize
+        return i
+
+    def generator(self, ins: VMIns, block: vtil.basic_block):
+        block.pop(ZAX)
+        block.vpinr(ZAX)
+        block.vemits(f'mov {bridge.reg_name(self.cr)}, {bridge.reg_name(ZAX)}')
 
 
 class VMPushSP(VMBase):
@@ -1687,6 +1757,7 @@ h_seq = [VMPushReg, VMPopReg,
          VMPushImm,
          VMNor, VMNand, VMShift,
          VMStr, VMLdr,
+         VMPushCRX, VMPopCRX,
          VMPushSP, VMPopSP,
          VMShld, VMShrd,
          VMAdd,
@@ -1698,7 +1769,6 @@ h_seq = [VMPushReg, VMPopReg,
          VMUnknown]
 # TODO:
 # lock xchg [r], r
-# push crX
 
 
 def factory(address, config):
@@ -1708,7 +1778,6 @@ def factory(address, config):
     if not insns:
         print(f'shit {address:X}')
         breakpoint()
-    # insns = x86_simple_decode(address, 150, True)
     if (splitline := get_splitline(insns)) > 0:
         body = insns[:splitline]
         connect = insns[splitline:]
