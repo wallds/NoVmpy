@@ -1186,6 +1186,63 @@ class VMCpuid(VMBase):
         block.push(vtil.x86_reg.EDX)
 
 
+class VMLockExchange(VMBase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.name = 'vmp_lock_xchg'
+
+    def match(self):
+        if len(self.body) > 5:
+            return False
+
+        def is_lock_xchg(insn: CsInsn):
+            if insn.id != X86_INS_XCHG:
+                return False
+            if X86_PREFIX_LOCK not in insn.prefix:
+                return False
+            op1, op2 = insn.operands
+            if op1.type == X86_OP_MEM and op2.type == X86_OP_REG:
+                self.opsize = op1.size
+                return True
+            return False
+        args = {}
+        mh = MatchHelper(self.body, self.config)
+        if (mh.load(0, {'reg': 'ph1'}) and
+                mh.load(bridge.size, {'reg': 'ph2'}) and
+                mh.match_for(is_lock_xchg) and 
+                mh.store(0)):
+            return True
+        return False
+
+    def get_instr(self, vmstate: VMState):
+        i = VMIns()
+        i.haddr = self.address
+        i.id = VM_INS_CPUID
+        i.address = vmstate.ip-vmstate.config.dir*4
+        i.mne = 'lock_xchg'
+        i.data = 0
+        i.opsize = self.opsize
+        return i
+
+    def generator(self, ins: VMIns, block: vtil.basic_block):
+        table = {1: (X86_REG_AL, 'byte'),
+                 2: (X86_REG_AX, 'word'),
+                 4: (X86_REG_EAX, 'dword'),
+                 8: (X86_REG_RAX, 'qword')}
+        reg, str_type = table[self.opsize]
+        # vr = remap(ZAX, opsize)
+        vr = vtil.x86_reg(reg)
+        block.pop(ZDX)
+        block.pop(vr)
+        block.vpinr(ZDX)
+        block.vpinr(ZAX)
+        block.vemits(
+            f'lock xchg {str_type} ptr [{bridge.reg_name(ZDX)}], {bridge.reg_name(reg)}')
+        block.vpinw(ZAX)
+
+        block.push(vr)
+
+
 class VMPushCRX(VMBase):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1763,12 +1820,11 @@ h_seq = [VMPushReg, VMPopReg,
          VMAdd,
          VMMul, VMImul, VMDiv, VMIdiv,
          VMRdtsc, VMCpuid,
+         VMLockExchange,
          VMCrc,
          VMPopFlag,
          VMNop, VMJmp, VMCall,
          VMUnknown]
-# TODO:
-# lock xchg [r], r
 
 
 def factory(address, config):

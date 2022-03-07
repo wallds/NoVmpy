@@ -488,6 +488,14 @@ class MatchHelper:
                 return True
         return False
 
+    def match_for(self, callback):
+        for i in range(self.index, len(self.body)):
+            insn: CsInsn = self.body[i]
+            if callback(insn):
+                self.update_index(i+1)
+                return True
+        return False
+
     def match(self, id, optype=None, opx=None):
         if optype is None:
             optype = []
