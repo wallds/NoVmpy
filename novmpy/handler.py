@@ -1217,7 +1217,7 @@ class VMLockExchange(VMBase):
     def get_instr(self, vmstate: VMState):
         i = VMIns()
         i.haddr = self.address
-        i.id = VM_INS_CPUID
+        i.id = VM_INS_LOCK_XCHG
         i.address = vmstate.ip-vmstate.config.dir*4
         i.mne = 'lock_xchg'
         i.data = 0
