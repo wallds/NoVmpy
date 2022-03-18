@@ -18,6 +18,7 @@ from pyvtil import *
 from novmpy.vm_lifter import VMLifter
 from novmpy.vm import VMState
 import os
+from novmpy.bridge import *
 
 
 class _base_graph_action_handler_t(ida_kernwin.action_handler_t):
@@ -93,7 +94,11 @@ class GraphErase(_base_graph_action_handler_t):
                 return 0
             for i in range(ln):
                 it = it.next()
-            msg = ida_lines.tag_remove(instruction_tostring(it.get()))
+            global skip_size
+            global bs_size
+            bs_size = 0
+            skip_size = 0
+            msg = ida_lines.tag_remove(instruction_tostring(block, it))
             if ida_kernwin.ask_yn(ida_kernwin.ASKBTN_NO, f'Erase:\n{msg}') != ida_kernwin.ASKBTN_YES:
                 return 0
             block.erase(it)
@@ -178,9 +183,13 @@ dict_cond = {
     'tul': 'u<', 'tule': 'u<=',
 }
 
+bs_size = 0
+skip_size = 0
 
-def instruction_tostring(ins: vtil.instruction):
+
+def instruction_tostring(basic_block: vtil.basic_block, it):
     # @https://github.com/vtil-project/VTIL-BinaryNinja/blob/master/vtil/vtil.py
+    ins: vtil.instruction = it.get()
     s = ''
     comment = ''
     s += ida_lines.COLSTR(f'{ins.base.to_string(ins.access_size()):6}',
@@ -236,17 +245,36 @@ def instruction_tostring(ins: vtil.instruction):
             comment += str(content[:30])
         else:
             comment += ida_name.get_name(imm)
+    global bs_size
+    global skip_size
+    if ins.base == vtil.ins.vemit:
+        asm_bytecode = b''
+        if bs_size == 0:
+            bs_size = ins.operands[0].size()
+            it2 = it
+            while it2 != basic_block.end():
+                i2: vtil.instruction = it2.get()
+                if i2.base != vtil.ins.vemit:
+                    break
+                uval = i2.operands[0].imm().uval
+                for _ in range(i2.operands[0].size()):
+                    asm_bytecode += bytes([uval & 0xFF])
+                    uval >>= 8
+                it2 = it2.next()
+            if asm_bytecode:
+                asm_vip = ins.vip if ins.vip != vtil.invalid_vip else 0
+                for a in bridge.disasm(asm_bytecode, asm_vip):
+                    comment = a.mnemonic+' '+a.op_str
+                    skip_size = a.size
+                    break
+        else:
+            bs_size += ins.operands[0].size()
+    if bs_size >= skip_size or ins.base != vtil.ins.vemit:
+        skip_size = 0
+        bs_size = 0
     if comment:
         s += ida_lines.COLSTR(' ; '+comment, ida_lines.SCOLOR_AUTOCMT)
     return s
-
-
-def remove_suffix(_s: str, _suffix: str):
-    # polyfill with Python 3.9- : str.removesuffix
-    try:
-        return _s.removesuffix(_suffix)
-    except AttributeError:
-        return _s[:-len(_suffix)] if _suffix and _s.endswith(_suffix) else _s
 
 
 class MyGraph(ida_graph.GraphViewer):
@@ -273,10 +301,15 @@ class MyGraph(ida_graph.GraphViewer):
         if self.rtn is None:
             return True
         for vip, b in self.rtn.explored_blocks.items():
+            global bs_size
+            global skip_size
+            skip_size = 0
+            bs_size = 0
             b: vtil.basic_block
             s = hex(vip)+':\n'
-            for i in b:
-                i: vtil.instruction
+            it = b.begin()
+            while it != b.end():
+                i: vtil.instruction = it.get()
                 _prefix = f'[{i.sp_index:>2}] ' if i.sp_index > 0 else '     '
                 x = '>' if i.sp_reset > 0 else ' '
                 x += '+' if i.sp_offset > 0 else '-'
@@ -284,9 +317,10 @@ class MyGraph(ida_graph.GraphViewer):
                 _prefix += f'{x:<6} '
                 if ida_ida.inf_show_line_pref():
                     s += ida_lines.COLSTR(_prefix, ida_lines.SCOLOR_PREFIX)
-                s += instruction_tostring(i)+'\n'
+                s += instruction_tostring(b, it) + '\n'
+                it = it.next()
             color = self.color
-            self.AddNode((remove_suffix(s, '\n'), color))
+            self.AddNode((s.rstrip('\n'), color))
             self.list_vip.append(vip)
 
         for vip, b in self.rtn.explored_blocks.items():

@@ -576,12 +576,12 @@ class VMStr(VMBase):
         t0, t1 = block.tmp(vtil.arch.bit_count, ins.opsize*8)
         block.pop(t0)
         block.pop(t1)
-        if self.segment == X86_PREFIX_GS:
+        if self.segment == X86_REG_GS:
             block.vemits("mov rax, gs:0x30")
             block.vpinw(ZAX)
             block.add(t0, ZAX)
             pass
-        elif self.segment == X86_PREFIX_FS:
+        elif self.segment == X86_REG_FS:
             assert False
         block.str(t0, 0, t1)
 
@@ -621,12 +621,12 @@ class VMLdr(VMBase):
     def generator(self, ins: VMIns, block: vtil.basic_block):
         t0, t1 = block.tmp(vtil.arch.bit_count, ins.opsize*8)
         block.pop(t0)
-        if self.segment == X86_PREFIX_GS:
+        if self.segment == X86_REG_GS:
             block.vemits("mov rax, gs:0x30")
             block.vpinw(ZAX)
             block.add(t0, ZAX)
             pass
-        elif self.segment == X86_PREFIX_FS:
+        elif self.segment == X86_REG_FS:
             pass
         block.ldd(t1, t0, 0)
         block.push(t1)

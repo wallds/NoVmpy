@@ -271,8 +271,10 @@ class VMLifter:
                             if reg_read == X86_REG_EFLAGS:
                                 op = vtil.REG_FLAGS
                             block.vpinr(op)
+                        block.label_begin(_ins.address)
                         for b in _ins.bytes:
                             block.vemit(vtil.make_uint(b, 8))
+                        block.label_end()
                         for reg_write in writes:
                             op = vtil.x86_reg(reg_write)
                             assert reg_write not in [X86_REG_ESP, X86_REG_RSP]
