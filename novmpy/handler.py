@@ -580,9 +580,10 @@ class VMStr(VMBase):
             block.vemits("mov rax, gs:0x30")
             block.vpinw(ZAX)
             block.add(t0, ZAX)
-            pass
         elif self.segment == X86_REG_FS:
-            assert False
+            block.vemits("mov eax, fs:0x18")
+            block.vpinw(ZAX)
+            block.add(t0, ZAX)
         block.str(t0, 0, t1)
 
 
@@ -625,9 +626,10 @@ class VMLdr(VMBase):
             block.vemits("mov rax, gs:0x30")
             block.vpinw(ZAX)
             block.add(t0, ZAX)
-            pass
         elif self.segment == X86_REG_FS:
-            pass
+            block.vemits("mov eax, fs:0x18")
+            block.vpinw(ZAX)
+            block.add(t0, ZAX)
         block.ldd(t1, t0, 0)
         block.push(t1)
 
