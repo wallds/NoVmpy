@@ -108,14 +108,62 @@ class GraphErase(_base_graph_action_handler_t):
         return ida_kernwin.AST_ENABLE_FOR_WIDGET
 
 
-class GraphApplyAllProfiled(_base_graph_action_handler_t):
+def ask_list(str_list):
+    class ListForm(ida_kernwin.Form):
+        def __init__(self, _str_list):
+            F = ida_kernwin.Form
+            F.__init__(self, r"""BUTTON YES OK
+
+                <pass:{str_list}>
+                """, {'str_list': F.DropdownListControl(items=_str_list, readonly=True)})
+
+    f = ListForm(str_list)
+    f, args = f.Compile()
+    ok = f.Execute()
+    result = ''
+    if ok and f.str_list.value >= 0:
+        result = str_list[f.str_list.value]
+    f.Free()
+    return result
+
+
+class GraphOptimizer(_base_graph_action_handler_t):
     def activate(self, ctx):
-        print('apply_all_profiled')
+        print('Optimizer')
         if self.graph.rtn is None:
             return 0
-        vtil.optimizer.apply_all_profiled(self.graph.rtn)
-        # self.graph.Refresh()
-        # ida_graph.viewer_center_on(ida_graph.get_graph_viewer(self.graph.GetWidget()), 0)
+        node_id = ida_graph.viewer_get_curnode(
+            ida_graph.get_graph_viewer(self.graph.GetWidget()))
+        print('node_id', node_id)
+        block = None
+        if node_id >= 0:
+            if self.graph.rtn is None:
+                return 0
+            for vip, b in self.graph.rtn.explored_blocks.items():
+                if vip == self.graph.list_vip[node_id]:
+                    block = b
+                    break
+        optimizers = {
+            'apply_all': vtil.optimizer.apply_all,
+            'stack_pinning_pass': vtil.optimizer.stack_pinning_pass,
+            'istack_ref_substitution_pass': vtil.optimizer.istack_ref_substitution_pass,
+            'bblock_extension_pass': vtil.optimizer.bblock_extension_pass,
+            'stack_propagation_pass': vtil.optimizer.stack_propagation_pass,
+            'dead_code_elimination_pass': vtil.optimizer.dead_code_elimination_pass,
+            'fast_dead_code_elimination_pass': vtil.optimizer.fast_dead_code_elimination_pass,
+            'mov_propagation_pass': vtil.optimizer.mov_propagation_pass,
+            'symbolic_rewrite_pass_force': vtil.optimizer.symbolic_rewrite_pass_force,
+            'symbolic_rewrite_pass': vtil.optimizer.symbolic_rewrite_pass,
+            'branch_correction_pass': vtil.optimizer.branch_correction_pass,
+            'register_renaming_pass': vtil.optimizer.register_renaming_pass,
+            'collective_cross_pass': vtil.optimizer.collective_cross_pass,
+        }
+        if choose := ask_list(list(optimizers.keys())):
+            optimizer = optimizers[choose]
+            if block is None:
+                optimizer(self.graph.rtn)
+            else:
+                optimizer(block)
         return 1
 
     def update(self, ctx):
@@ -310,7 +358,9 @@ class MyGraph(ida_graph.GraphViewer):
             it = b.begin()
             while it != b.end():
                 i: vtil.instruction = it.get()
-                _prefix = f'[{i.sp_index:>2}] ' if i.sp_index > 0 else '     '
+                _prefix = ''
+                # _prefix = f'[ {i.vip:016X} ]' if i.vip != vtil.invalid_vip else '[    PSEUDOCODE    ]'
+                _prefix += f'[{i.sp_index:>2}] ' if i.sp_index > 0 else '     '
                 x = '>' if i.sp_reset > 0 else ' '
                 x += '+' if i.sp_offset > 0 else '-'
                 x += hex(abs(i.sp_offset))
@@ -349,7 +399,7 @@ class MyGraph(ida_graph.GraphViewer):
     def OnPopup(self, form, popup_handle):
         popup = collections.OrderedDict({
             'Refresh': GraphRefresh(self),
-            'apply_all_profiled': GraphApplyAllProfiled(self),
+            'Optimizer': GraphOptimizer(self),
             'Trace': GraphTrace(self),
             'Erase': GraphErase(self),
             'Load': GraphLoad(self),
