@@ -20,6 +20,10 @@ Copy novmpy&novmpy.py to IDA plugin directory.
 ## 3. Usage
 ![1](./imgs/1.gif)
 
+## Support list
+Version       | x86 | amd64 | arm64
+:------------ | :-------------| :-------------| :-------------
+VMProtect 3.x | :heavy_check_mark: |  :heavy_check_mark: |
 
 
 # Reference
