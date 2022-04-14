@@ -88,12 +88,12 @@ class VMLifter:
 
     def lift_il(self, block: vtil.basic_block, state: VMState):
         if state.ip == 0:
-            vmstate, vminit, rage = handler.vmentry_parse(
-                state.current_handler)
+            vmp_entry = state.current_handler
+            vmstate, vminit, stub = handler.vmentry_parse(vmp_entry)
             assert(vmstate != None)
 
             tmp_state = vmstate
-            # rage.extend(vminit.save_regs)
+            # stub.extend(vminit.save_regs)
 
             print('vmstate.ip: {:x}'.format(tmp_state.ip))
             # 0x0048AFF0| vm_init 0x4514a9
@@ -101,16 +101,16 @@ class VMLifter:
             vip += 0 if tmp_state.config.dir >= 0 else -1
             tmp_state.current_handler = vminit.get_next(tmp_state)
             if block is None:
-                block, _ = self.rtn.create_block(vip)
+                block, _ = self.rtn.create_block(vmp_entry)
             else:
-                new_block = block.fork(vip)
+                new_block = block.fork(vmp_entry)
                 if new_block is None:
-                    return self.rtn.get_block(vip)
+                    return self.rtn.get_block(vmp_entry)
                 block = new_block
             # push imm
-            block.push(vtil.make_int(rage[0].operands[0].imm))
+            block.push(vtil.make_int(stub[0].operands[0].imm))
             # call vm_init
-            block.push(rage[1].address+rage[1].size)
+            block.push(stub[1].address+stub[1].size)
             for i, j in vminit.pushs:
                 if i == CS_OP_IMM:
                     # FIXME!
@@ -123,6 +123,12 @@ class VMLifter:
                         block.pushf()
                     else:
                         block.push(vtil.x86_reg(j))
+            # 得切分成两个基本块，因为存在从其它基本块直接跳入vip的情况。
+            block.jmp(vip)
+            new_block = block.fork(vip)
+            if new_block is None:
+                return self.rtn.get_block(vip)
+            block = new_block
         else:
             if block is None:
                 return None
@@ -158,6 +164,8 @@ class VMLifter:
                 block.jmp(jmp_dest)
 
                 fix_constant_pool(block)
+
+                # block.owner.local_opt_count += vtil.optimizer.apply_all(block, False)
 
                 flag = vtil.optimizer.aux.branch_analysis_flags(pack=True)
                 tracer = vtil.tracer()
