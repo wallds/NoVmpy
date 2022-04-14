@@ -32,6 +32,9 @@ class VMState:
         self.current_handler = kwargs.get('current_handler', 0)
         self.config: VMConfig = kwargs.get('config', None)
 
+    def get_address(self):
+        return self.ip-self.config.dir*4
+
     def decode_emu(self, decoder, ct, reg, size):
         mask = get_mask(size*8)
         reg_key_op = X86_REG_INVALID
