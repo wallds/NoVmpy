@@ -46,7 +46,7 @@ class VMIns(object):
         self.comment = ''
 
     def __str__(self) -> str:
-        if self.opsize == 0:
+        if not self.opstr:
             s = '{:08X}| {}'.format(self.address, self.mne)
         else:
             s = '{:08X}| {} {}'.format(self.address, self.mne, self.opstr)
@@ -134,6 +134,23 @@ class VMBase(object):
             return True
         return False
 
+    def parse_hbase(self, insn: CsInsn, reg_base: int):
+        hbase = None
+        is64bit = bridge.is64bit()
+        if instr_match(insn, X86_INS_LEA, [X86_OP_REG, X86_OP_MEM], [reg_base, {'index': X86_REG_INVALID, 'scale': 1}]):
+            op1, op2 = insn.operands
+            if op2.mem.base != (X86_REG_RIP if is64bit else X86_REG_INVALID):
+                return None
+            if is64bit and op2.mem.disp != -7:
+                return None
+            if not is64bit:
+                # lea base, [disp]
+                hbase = op2.mem.disp
+            else:
+                # lea base, [rip+disp]
+                hbase = insn.address + insn.size + op2.mem.disp
+        return hbase
+
     def match(self):
         raise NotImplementedError('')
 
@@ -150,11 +167,9 @@ class VMNop(VMBase):
         if len(self.body) != 1:
             return False
         insn: CsInsn = self.body[0]
-        if instr_match(insn, X86_INS_LEA, [X86_OP_REG, X86_OP_MEM], [self.config.reg_base, {'base': X86_REG_INVALID, 'index': X86_REG_INVALID, 'scale': 1}]):
-            self.hbase = insn.operands[1].mem.disp
-            return True
-        if bridge.is64bit() and instr_match(insn, X86_INS_LEA, [X86_OP_REG, X86_OP_MEM], [self.config.reg_base, {'base': X86_REG_RIP, 'index': X86_REG_INVALID, 'scale': 1, 'disp': -7}]):
-            self.hbase = insn.address
+        new_base = self.parse_hbase(insn, self.config.reg_base)
+        if new_base != None:
+            self.hbase = new_base
             return True
         return False
 
@@ -162,7 +177,7 @@ class VMNop(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_NOP
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'nop'
         i.opstr = ''
         i.data = 0
@@ -196,10 +211,9 @@ class VMPushReg(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_PUSH_REG
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         v = vmstate.decode_emu(self.decoder, vmstate.fetch(1), self.reg, 1)
-        index = int(v / bridge.size)
-        off = int(v % bridge.size)
+        index, off = divmod(v, bridge.size)
         i.mne = 'push_reg{}'.format(self.opsize)
         i.opstr = reg2name(index, off, self.opsize)
         i.data = v
@@ -247,10 +261,9 @@ class VMPopReg(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_POP_REG
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         v = vmstate.decode_emu(self.decoder, vmstate.fetch(1), self.reg, 1)
-        index = int(v / bridge.size)
-        off = int(v % bridge.size)
+        index, off = divmod(v, bridge.size)
         i.mne = 'pop_reg{}'.format(self.opsize)
         i.opstr = reg2name(index, off, self.opsize)
         i.data = v
@@ -283,7 +296,7 @@ class VMPushImm(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_PUSH_IMM
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         imm = vmstate.decode_emu(self.decoder, vmstate.fetch(
             self.bytecode_size), self.reg, self.bytecode_size)
         i.mne = 'push_imm{}'.format(self.opsize)
@@ -313,7 +326,6 @@ class VMCall(VMBase):
         if mh.fetch_byte() and mh.decode(args) and mh.batch(X86_INS_CALL):
             self.decoder = args['decoder']
             self.reg = args['reg']
-            self.opsize
             return True
         return False
 
@@ -321,7 +333,7 @@ class VMCall(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_CALL
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         imm = vmstate.decode_emu(self.decoder, vmstate.fetch(
             self.bytecode_size), self.reg, self.bytecode_size)
         i.mne = 'call'
@@ -330,6 +342,13 @@ class VMCall(VMBase):
         i.opsize = self.opsize
         return i
 
+    def generator(self, ins: VMIns, block: vtil.basic_block):
+        a0 = block.tmp(vtil.arch.bit_count)
+        for i in range(ins.data):
+            t = block.tmp(vtil.arch.bit_count)
+            block.pop(t)
+        block.pop(a0)
+        block.vemits('int 3')
 
 class VMCrc(VMBase):
     def __init__(self, **kwargs):
@@ -385,7 +404,7 @@ class VMCrc(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_CRC
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'crc'
         i.data = 0
         i.opsize = self.opsize
@@ -421,7 +440,7 @@ class VMAdd(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_ADD
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'add{}'.format(self.opsize)
         i.opstr = ''
         i.data = 0
@@ -477,7 +496,7 @@ class VMNor(VMBase):  # not not and
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_NOR
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'nor{}'.format(self.opsize)
         i.opstr = ''
         i.data = 0
@@ -518,7 +537,7 @@ class VMNand(VMBase):  # not not or
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_NAND
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'nand{}'.format(self.opsize)
         i.opstr = ''
         i.data = 0
@@ -561,7 +580,7 @@ class VMStr(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_STR
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'store'
         s = size2name(self.opsize)
         if self.segment == X86_REG_INVALID:
@@ -608,7 +627,7 @@ class VMLdr(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_LDR
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'load'
         s = size2name(self.opsize)
         if self.segment == X86_REG_INVALID:
@@ -683,7 +702,7 @@ class VMShift(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = m[self.ins]
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = '{}{}'.format(i2n[i.id], self.opsize)
         i.data = 0
         i.opsize = self.opsize
@@ -741,7 +760,7 @@ class VMShld(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_SHLD
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'shld{}'.format(self.opsize)
         i.data = 0
         i.opsize = self.opsize
@@ -796,7 +815,7 @@ class VMShrd(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_SHRD
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'shrd{}'.format(self.opsize)
         i.data = 0
         i.opsize = self.opsize
@@ -858,7 +877,7 @@ class VMMul(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_MUL
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'mul{}'.format(self.opsize)
         i.data = 0
         i.opsize = self.opsize
@@ -922,7 +941,7 @@ class VMImul(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_IMUL
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'imul{}'.format(self.opsize)
         i.data = 0
         i.opsize = self.opsize
@@ -998,7 +1017,7 @@ class VMDiv(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_DIV
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'div{}'.format(self.opsize)
         i.data = 0
         i.opsize = self.opsize
@@ -1070,7 +1089,7 @@ class VMIdiv(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_IDIV
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'idiv{}'.format(self.opsize)
         i.data = 0
         i.opsize = self.opsize
@@ -1129,7 +1148,7 @@ class VMRdtsc(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_RDTSC
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'rdtsc'
         i.data = 0
         i.opsize = self.opsize
@@ -1167,7 +1186,7 @@ class VMCpuid(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_CPUID
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'cpuid'
         i.data = 0
         i.opsize = self.opsize
@@ -1211,7 +1230,7 @@ class VMLockExchange(VMBase):
         mh = MatchHelper(self.body, self.config)
         if (mh.load(0, {'reg': 'ph1'}) and
                 mh.load(bridge.size, {'reg': 'ph2'}) and
-                mh.match_for(is_lock_xchg) and 
+                mh.match_for(is_lock_xchg) and
                 mh.store(0)):
             return True
         return False
@@ -1220,7 +1239,7 @@ class VMLockExchange(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_LOCK_XCHG
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'lock_xchg'
         i.data = 0
         i.opsize = self.opsize
@@ -1267,7 +1286,7 @@ class VMPushCRX(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_PUSH_CRX
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = f'push_{bridge.reg_name(self.cr)}'
         i.opstr = ''
         i.data = 0
@@ -1302,7 +1321,7 @@ class VMPopCRX(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_POP_CRX
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = f'pop_{bridge.reg_name(self.cr)}'
         i.opstr = ''
         i.data = 0
@@ -1334,7 +1353,7 @@ class VMPushSP(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_PUSH_SP
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'push_sp{}'.format(self.opsize)
         i.opstr = ''
         i.data = 0
@@ -1368,7 +1387,7 @@ class VMPopSP(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_POP_SP
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'pop_sp{}'.format(self.opsize)
         i.opstr = ''
         i.data = 0
@@ -1398,7 +1417,7 @@ class VMPopFlag(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_POP_EFLAGS
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'pop_flag{}'.format(self.opsize)
         i.opstr = ''
         i.data = 0
@@ -1410,17 +1429,16 @@ class VMPopFlag(VMBase):
         block.popf()
 
 
-def feeling_good(insns_connect):
+def feeling_good(insns_connect: list[CsInsn]):
     """
     dir
     reg_base
     reg_key
     reg_ip
     """
-    reg_off = X86_REG_INVALID
     config = VMConfig()
     config.dir = 1
-    config.reg_base = get_regbase(insns_connect)
+    config.reg_base, reg_off = get_regbase(insns_connect), X86_REG_INVALID
     for insn in reversed(insns_connect):
         # find add edi(base), edx(off)
         if (reg_off == X86_REG_INVALID and instr_match(insn, X86_INS_ADD, [X86_OP_REG, X86_OP_REG], [config.reg_base])):
@@ -1457,6 +1475,8 @@ class VMInit(VMBase):
 
     def parse_vminit(self):
         self.config = feeling_good(self.connect)
+        if not self.config:
+            return False
         i_save_regs = 0
         i_decode_ip = -1
         i_set_sp = -1
@@ -1558,7 +1578,7 @@ class VMExit(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_EXIT
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'exit'
         i.opstr = ''
         i.data = 0
@@ -1617,7 +1637,7 @@ class VMUnknown(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_UNKNOWN
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         bytecode = 0
         if self.bytecode_size:
             bytecode = vmstate.decode_emu(self.decoder, vmstate.fetch(
@@ -1642,7 +1662,7 @@ class VMInvalid(VMBase):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_INVALID
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'invalid'
         i.opstr = ''
         i.data = 0
@@ -1668,7 +1688,6 @@ def vmentry_parse(addr):
             vmstate.config = h.config
             vmstate.ip = h.decode_ip(vm_imm, vmstate)
             vmstate.key = (vmstate.ip-vmstate.config.rebase) & mask
-            # vmstate.base = h.get_next()
             return (vmstate, h, insn_x)
     return (None, None, insn_x)
 
@@ -1681,6 +1700,8 @@ class VMJmp(VMBase):
     def simple_parse(self):
         # breakpoint()
         self.conn_config = feeling_good(self.connect)
+        if not self.conn_config:
+            return False
         self.conn_config.rebase = self.config.rebase
         if bridge.is64bit():
             new_sp = [self.config.reg_sp]
@@ -1704,11 +1725,13 @@ class VMJmp(VMBase):
         else:
             # 32 only
             self.conn_config.reg_sp = X86_REG_EBP ^ X86_REG_EDI ^ X86_REG_ESI ^ self.conn_config.reg_ip ^ self.conn_config.reg_base
+        return True
 
     def match(self):
         matched = False
         reg_newip = X86_REG_INVALID
-        self.simple_parse()
+        if not self.simple_parse():
+            return False
         for insn in self.body:
             if reg_newip == X86_REG_INVALID:
                 # mov conn_config.reg_ip, reg
@@ -1724,23 +1747,17 @@ class VMJmp(VMBase):
                 if instr_match(insn, X86_INS_XCHG, [X86_OP_REG, X86_OP_REG], [reg_newip, self.conn_config.reg_ip]):
                     pass
             if matched:
-                if bridge.is64bit():
-                    # lea base, [imm]
-                    if instr_match(insn, X86_INS_LEA, [X86_OP_REG, X86_OP_MEM], [self.conn_config.reg_base, {'base': X86_REG_RIP, 'index': X86_REG_INVALID, 'scale': 1, 'disp': -7}]):
-                        self.hbase = insn.address
-                        return True
-                else:
-                    # lea base, [imm]
-                    if instr_match(insn, X86_INS_LEA, [X86_OP_REG, X86_OP_MEM], [self.conn_config.reg_base, {'base': X86_REG_INVALID, 'index': X86_REG_INVALID, 'scale': 1}]):
-                        self.hbase = insn.operands[1].mem.disp
-                        return True
+                new_base = self.parse_hbase(insn, self.conn_config.reg_base)
+                if new_base != None:
+                    self.hbase = new_base
+                    return True
         return False
 
     def get_instr(self, vmstate):
         i = VMIns()
         i.haddr = self.address
         i.id = VM_INS_JMP
-        i.address = vmstate.ip-vmstate.config.dir*4
+        i.address = vmstate.get_address()
         i.mne = 'jmp'
         i.opstr = ''
         i.data = 0
@@ -1777,7 +1794,7 @@ def get_regbase(insns):
     return X86_REG_INVALID
 
 
-def get_splitline(insns):
+def get_splitline(insns: CsInsn):
     reg_off = X86_REG_INVALID
     reg_base = X86_REG_INVALID
     splitline = -1
@@ -1829,7 +1846,7 @@ h_seq = [VMPushReg, VMPopReg,
          VMUnknown]
 
 
-def factory(address, config):
+def factory(address, config: VMConfig):
     if address in vm_handlers:
         return vm_handlers[address]
     insns = x86_simple_decode(address, 150, True)
