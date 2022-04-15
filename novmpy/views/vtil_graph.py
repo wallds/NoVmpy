@@ -290,7 +290,10 @@ def instruction_tostring(basic_block: vtil.basic_block, it):
     if imm > 0:
         if is_strlit(get_flags(imm)):
             content = get_strlit_contents(imm, -1, get_str_type(imm))
-            comment += str(content[:30])
+            content = content.decode('UTF-8', 'replace')
+            comment += repr(content[:30])
+            if len(content) > 30:
+                comment += '...'
         else:
             comment += ida_name.get_name(imm)
     global bs_size
