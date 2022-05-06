@@ -1193,6 +1193,8 @@ class VMCpuid(VMBase):
         return i
 
     def generator(self, ins: VMIns, block: vtil.basic_block):
+        block.pop(vtil.x86_reg.EAX)
+
         block.vpinr(ZCX)
         block.vpinr(ZAX)
         block.vemits('cpuid')
