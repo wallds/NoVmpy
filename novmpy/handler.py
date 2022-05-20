@@ -4,6 +4,7 @@ from novmpy.vm import *
 from novmpy.vm_const import *
 import struct
 from pyvtil import *
+from typing import List
 
 vm_handlers = {}
 
@@ -1431,7 +1432,7 @@ class VMPopFlag(VMBase):
         block.popf()
 
 
-def feeling_good(insns_connect: list[CsInsn]):
+def feeling_good(insns_connect: List[CsInsn]):
     """
     dir
     reg_base
