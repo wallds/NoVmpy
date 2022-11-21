@@ -34,7 +34,7 @@ def search_vmstubs():
     return stubs
 
 
-def fix_constant_pool(block: vtil.basic_block):
+def fix_constant_pool(block: vtil.basic_block, rel_base=0):
     vtil.optimizer.stack_pinning_pass(block)
     vtil.optimizer.istack_ref_substitution_pass(block)
 
@@ -46,8 +46,9 @@ def fix_constant_pool(block: vtil.basic_block):
         if var.is_register() and var.reg().is_image_base():
             return 0
         if var.is_memory() and ((var.mem().base - reloc_base) == 0):
-            # TODO:
-            return -0  # -base
+            if bridge.is64bit():
+                return rel_base & 0xFFFFFFFFFFFFFFFF
+            return rel_base & 0xFFFFFFFF
         return None
 
     tracer = vtil.cached_tracer()
@@ -67,7 +68,10 @@ def fix_constant_pool(block: vtil.basic_block):
         res = exp.evaluate(exp_eval)
 
         if res.is_known():
-            rva = res.get_uint64() + off
+            if bridge.is64bit():
+                rva = (res.get_uint64() + off) & 0xFFFFFFFFFFFFFFFF
+            else:
+                rva = (res.get_uint64() + off) & 0xFFFFFFFF
             if bridge.is_readable(rva, ins.access_size()//8) and\
                     not bridge.is_writeable(rva, ins.access_size()//8):
                 value = bridge.read(rva, ins.access_size()//8)
@@ -81,6 +85,7 @@ def fix_constant_pool(block: vtil.basic_block):
 class VMLifter:
     def __init__(self) -> None:
         self.rtn = vtil.routine()
+        self.rel_base = 0  # default_base - real_base
 
     def is_valid_vmentry(self, vmentry):
         vmstate, vminit, rage = handler.vmentry_parse(vmentry)
@@ -113,10 +118,10 @@ class VMLifter:
             block.push(stub[1].address+stub[1].size)
             for i, j in vminit.pushs:
                 if i == CS_OP_IMM:
-                    # FIXME!
+                    self.rel_base = j
                     treloc = block.tmp(vtil.arch.bit_count)
                     block.mov(treloc, vtil.REG_IMGBASE)  # 0x140000000
-                    block.sub(treloc, 0)  # FIXME! -bridge.get_base()
+                    block.sub(treloc, vtil.make_int(-self.rel_base))
                     block.push(treloc)
                 elif i == CS_OP_REG:
                     if j == X86_REG_EFLAGS:
@@ -140,6 +145,10 @@ class VMLifter:
             if h is None:
                 break
             i: handler.VMIns = h.get_instr(tmp_state)
+
+            if isinstance(h, handler.VMInvalid):
+                print(f'invalid handler {hex(h.address)}')
+
             print(block.sp_offset, i)
             block.label_begin(i.address)
             h.generator(i, block)
@@ -152,7 +161,7 @@ class VMLifter:
                 if tmp_state.config.dir < 0:
                     dst -= 1
                 block.jmp(dst)
-                fix_constant_pool(block)
+                fix_constant_pool(block, self.rel_base)
                 tmp_state.current_handler = h.get_next(tmp_state)
                 self.lift_il(block.fork(dst), tmp_state)
                 return block
@@ -163,7 +172,7 @@ class VMLifter:
                     block.sub(jmp_dest, 1)
                 block.jmp(jmp_dest)
 
-                fix_constant_pool(block)
+                fix_constant_pool(block, self.rel_base)
 
                 # block.owner.local_opt_count += vtil.optimizer.apply_all(block, False)
 
@@ -218,7 +227,7 @@ class VMLifter:
                 block.pop(jmp_dest)
                 block.vexit(jmp_dest)
 
-                fix_constant_pool(block)
+                fix_constant_pool(block, self.rel_base)
 
                 jmp_dest = block.back().operands[0]
 

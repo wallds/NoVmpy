@@ -67,6 +67,12 @@ class BridgeLocal(BridgeBase):  # bridge for local
         else:
             return addr-size >= self.ld.main_object.min_addr and addr <= self.ld.main_object.max_addr
 
+    def is_writeable(self, addr, size, dir_=1):
+        for seg in self.get_segs():
+            if seg.vaddr <= addr < seg.vaddr+seg.memsize:
+                return seg.is_writable
+        return False
+
     def get_bytes(self, addr, size):
         return self.ld.memory.load(addr, size)
 
@@ -144,6 +150,14 @@ class BridgeIda(BridgeBase):  # bridge for ida:
         import ida_kernwin
         ida_kernwin.replace_wait_box(msg)
         return not ida_kernwin.user_cancelled()
+
+
+class BridgeDummy(BridgeBase):  # bridge for dummy
+    def __init__(self):
+        super().__init__()
+
+    def is64bit(self):
+        return True
 
 
 try:
