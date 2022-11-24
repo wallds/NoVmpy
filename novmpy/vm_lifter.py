@@ -277,7 +277,7 @@ class VMLifter:
                         if _ins.id in [X86_INS_PUSHFD, X86_INS_PUSHFQ]:
                             block.pushf()
                             continue
-                        elif _ins.id == [X86_INS_POPFD, X86_INS_POPFQ]:
+                        elif _ins.id in [X86_INS_POPFD, X86_INS_POPFQ]:
                             block.popf()
                             continue
                         reads, writes = _ins.regs_access()
