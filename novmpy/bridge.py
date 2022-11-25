@@ -39,8 +39,8 @@ class BridgeBase:
     def disasm(self, code, offset, count=0):
         return self.md.disasm(code, offset, count)
 
-    def disasm_one(self, offset):
-        for x in self.md.disasm(self.get_bytes(offset, 20), offset, 1):
+    def disasm_one(self, offset, size=20):
+        for x in self.md.disasm(self.get_bytes(offset, size), offset, 1):
             return x
         return None
 

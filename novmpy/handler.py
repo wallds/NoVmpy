@@ -1,3 +1,5 @@
+from unicorn import *
+from unicorn.x86_const import *
 from novmpy.match_helper import *
 from novmpy.x86_deobf import *
 from novmpy.vm import *
@@ -350,6 +352,7 @@ class VMCall(VMBase):
             block.pop(t)
         block.pop(a0)
         block.vemits('int 3')
+
 
 class VMCrc(VMBase):
     def __init__(self, **kwargs):
@@ -1673,26 +1676,128 @@ class VMInvalid(VMBase):
         return i
 
 
+def hook_code(uc: Uc, address, size, user_data):
+    emu = user_data
+    ins = bridge.disasm_one(address, size)
+    sp = uc.reg_read(UC_X86_REG_RSP if bridge.is64bit() else UC_X86_REG_ESP)
+    diff_sp = sp-emu.entry_sp
+    # print(f'{address:08X} {diff_sp} {ins.mnemonic} {ins.op_str}')
+    if ins.group(CS_GRP_JUMP):
+        return
+    emu.trace.append((ins, diff_sp))
+    if emu.has_lea_stack and ins.id == X86_INS_CALL and ins.operands[0].type == CS_OP_IMM:
+        if diff_sp < 0:
+            fmt = '<q' if bridge.is64bit() else '<i'
+            emu.vm_imm = struct.unpack(fmt, uc.mem_read(sp, bridge.size))[0]
+            emu.vm_init_addr = ins.operands[0].imm
+
+            for i in range(len(emu.trace)-1, -1, -1):
+                if emu.trace[i][1] == (diff_sp+bridge.size):
+                    emu.stub_addr = emu.trace[i][0].address
+                    for _ins, _ in emu.trace[:i]:
+                        emu.vm_unimpl_insn.append(_ins)
+                    emu.success = True
+                    emu.vm_imm2 = ins.address+ins.size
+                    break
+        uc.emu_stop()
+        return
+    if ins.id == X86_INS_LEA and ins.operands[0].reg in [X86_REG_ESP, X86_REG_RSP]:
+        emu.has_lea_stack = True
+
+
+def hook_mem_unmapped(uc, access, address, size, value, user_data):
+    print(f'[hook_mem_unmapped]: ', access, hex(address), size, value)
+    seg = None
+    for _seg in bridge.get_segs():
+        if _seg.min_addr <= address < _seg.max_addr:
+            seg = _seg
+            break
+    if not seg:
+        start = address & (~0xFFF)
+        end = start+0x1000
+    else:
+        start, end = seg.min_addr, seg.max_addr
+    start &= ~0xFFF
+    end = (end+0xFFF) & (~0xFFF)
+
+    uc.mem_map(start, end-start, UC_PROT_ALL)
+    uc.mem_write(start, bridge.get_bytes(start, end-start))
+    return True
+
+
+class Emu():
+    def __init__(self):
+        self.has_lea_stack = False
+        self.trace = []
+        self.entry_sp = 0x20007F00
+        self.vm_imm = 0
+        self.stub_addr = 0
+        self.vm_imm2 = 0
+        self.vm_init_addr = 0
+        self.vm_unimpl_insn = []
+        self.success = False
+        mode = UC_MODE_64 if bridge.is64bit() else UC_MODE_32
+        self.uc = Uc(UC_ARCH_X86, mode)
+
+        self.uc.mem_map(0x20000000, 0x8000, UC_PROT_ALL)
+        reg = UC_X86_REG_RSP if bridge.is64bit() else UC_X86_REG_ESP
+        self.uc.reg_write(reg, self.entry_sp)
+
+        self.uc.hook_add(UC_HOOK_CODE, hook_code, self)
+        self.uc.hook_add(UC_HOOK_MEM_UNMAPPED, hook_mem_unmapped)
+
+    def run(self, address):
+        try:
+            self.uc.emu_start(address, -1, 0, 80)
+        except:
+            return False
+        return self.success
+
+
+class VMEntryParseResult:
+    def __init__(self, vmstate, vminit, stub_addr, vm_imm, vm_imm2, vm_unimpl_insn) -> None:
+        self.vmstate = vmstate
+        self.vminit = vminit
+        self.stub_addr = stub_addr
+        self.vm_imm = vm_imm
+        self.vm_imm2 = vm_imm2
+        self.vm_unimpl_insn = vm_unimpl_insn
+
+
 def vmentry_parse(addr):
     # [unimpl insn]
     # push <imm>
     # call <vm_init>
     insn_x = x86_simple_decode(addr, 5, True)
-    if len(insn_x) < 2:
-        return (None, None, insn_x)
-    if (instr_match(insn_x[-2], X86_INS_PUSH, {X86_OP_IMM}) and
-            instr_match(insn_x[-1], X86_INS_CALL, {X86_OP_IMM})):
-        vm_imm = insn_x[-2].operands[0].imm
-        vm_init = insn_x[-1].operands[0].imm
-        h = factory(vm_init, None)
-        if h and isinstance(h, VMInit):
-            mask = get_mask(bridge.size*8)
-            vmstate = VMState()
-            vmstate.config = h.config
-            vmstate.ip = h.decode_ip(vm_imm, vmstate)
-            vmstate.key = (vmstate.ip-vmstate.config.rebase) & mask
-            return (vmstate, h, insn_x)
-    return (None, None, insn_x)
+    if len(insn_x) >= 2:
+        if (instr_match(insn_x[-2], X86_INS_PUSH, {X86_OP_IMM}) and
+                instr_match(insn_x[-1], X86_INS_CALL, {X86_OP_IMM})):
+            vm_imm = insn_x[-2].operands[0].imm
+            vm_init = insn_x[-1].operands[0].imm
+            vm_unimpl_insn = insn_x[:-2]
+            h = factory(vm_init, None)
+            if h and isinstance(h, VMInit):
+                mask = get_mask(bridge.size*8)
+                vmstate = VMState()
+                vmstate.config = h.config
+                vmstate.ip = h.decode_ip(vm_imm, vmstate)
+                vmstate.key = (vmstate.ip-vmstate.config.rebase) & mask
+                return VMEntryParseResult(vmstate, h, insn_x[-2].address, vm_imm, vm_init, vm_unimpl_insn)
+    # vmp version >= 3.6
+    emu = Emu()
+    res = emu.run(addr)
+    if not res:
+        return None
+
+    h = factory(emu.vm_init_addr, None)
+    if h and isinstance(h, VMInit):
+        mask = get_mask(bridge.size*8)
+        vmstate = VMState()
+        vmstate.config = h.config
+        vmstate.ip = h.decode_ip(emu.vm_imm, vmstate)
+        vmstate.key = (vmstate.ip-vmstate.config.rebase) & mask
+        return VMEntryParseResult(vmstate, h, emu.stub_addr, emu.vm_imm, emu.vm_imm2, emu.vm_unimpl_insn)
+    return None
 
 
 class VMJmp(VMBase):
