@@ -1,7 +1,6 @@
 from __future__ import print_function
 
 from capstone import CsInsn
-from numpy import isin
 from ida_kernwin import Choose
 from novmpy.handler import vm_handlers
 from novmpy.handler import VMJmp
