@@ -1550,6 +1550,7 @@ class VMInit(VMBase):
         if bridge.is64bit():
             v += 0x100000000
             v += vmstate.config.rebase
+        v &= get_mask(bridge.size*8)
         return v
 
     def match(self):
@@ -1689,7 +1690,7 @@ def hook_code(uc: Uc, address, size, user_data):
         if diff_sp < 0:
             fmt = '<q' if bridge.is64bit() else '<i'
             emu.vm_imm = struct.unpack(fmt, uc.mem_read(sp, bridge.size))[0]
-            emu.vm_init_addr = ins.operands[0].imm
+            emu.vm_init_addr = ins.operands[0].imm & get_mask(bridge.size*8)
 
             for i in range(len(emu.trace)-1, -1, -1):
                 if emu.trace[i][1] == (diff_sp+bridge.size):
@@ -1773,7 +1774,7 @@ def vmentry_parse(addr):
         if (instr_match(insn_x[-2], X86_INS_PUSH, {X86_OP_IMM}) and
                 instr_match(insn_x[-1], X86_INS_CALL, {X86_OP_IMM})):
             vm_imm = insn_x[-2].operands[0].imm
-            vm_init = insn_x[-1].operands[0].imm
+            vm_init = insn_x[-1].operands[0].imm & get_mask(bridge.size*8)
             vm_unimpl_insn = insn_x[:-2]
             h = factory(vm_init, None)
             if h and isinstance(h, VMInit):

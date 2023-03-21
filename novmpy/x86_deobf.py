@@ -33,12 +33,12 @@ def shit_disasm(ea, max_insn_count=-1, term_call_imm=False):
         if insn.group(X86_GRP_JUMP):
             op1: X86Op = insn.operands[0]
             if insn.id != X86_INS_JMP and op1.type == X86_OP_IMM:
-                branches.append(op1.imm)
+                branches.append(op1.imm & get_mask(bridge.size*8))
                 branches.append(addr+insn.size)
             # jmp imm
             if insn.id == X86_INS_JMP:
                 if op1.type == X86_OP_IMM:
-                    addr = op1.imm
+                    addr = op1.imm & get_mask(bridge.size*8)
                     continue
                 # jmp reg | jmp [mem]
                 else:

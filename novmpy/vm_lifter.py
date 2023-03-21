@@ -205,7 +205,7 @@ class VMLifter:
                         tmp_state2 = copy.deepcopy(tmp_state)
                         tmp_state2.config = h.conn_config
                         tmp_state2.ip = ip
-                        tmp_state2.key = tmp_state2.ip-tmp_state2.config.rebase
+                        tmp_state2.key = (tmp_state2.ip-tmp_state2.config.rebase) & get_mask(bridge.size*8)
                         next_h = h.get_next(tmp_state2)
                         if bridge.is_readable(next_h, 4):
                             tmp_state2.current_handler = next_h
