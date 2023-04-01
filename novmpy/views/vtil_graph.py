@@ -474,6 +474,9 @@ def show_graph(ea):
             vtil.optimizer.apply_all_profiled(lifter.rtn)
             print('Saving optimized')
             lifter.rtn.save(optimized)
+        except KeyboardInterrupt as e:
+            print(e)
+            lifter.rtn = None
         finally:
             ida_kernwin.hide_wait_box()
         # vtil.debug.dump(lifter.rtn)

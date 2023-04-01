@@ -133,7 +133,8 @@ class VMLifter:
                 return None
             tmp_state = state
         # Messages cannot be updated frequently, which can slow down performance.
-        bridge.update_msg(f'lifting {block.entry_vip:08X}')
+        if not bridge.update_msg(f'lifting {block.entry_vip:08X}'):
+            raise KeyboardInterrupt('User interrupted')
         while True:
             h = handler.factory(tmp_state.current_handler, tmp_state.config)
             if h is None:
