@@ -214,11 +214,16 @@ class JumptoAction(_base_graph_action_handler_t):
         return ida_kernwin.AST_ENABLE_FOR_WIDGET
 
 
-def pack_operands(operands):
+def pack_operands(ins: vtil.instruction):
+    operands = ins.operands
     opstr = []
     for op in operands:
         color = ida_lines.SCOLOR_REG if op.is_register() else ida_lines.SCOLOR_DNUM
-        _opstr = ida_lines.COLSTR(f'{str(op)}', color)
+        if ins.base.name == 'js' and op.is_immediate():
+            s = hex(op.imm().uval)
+        else:
+            s = str(op)
+        _opstr = ida_lines.COLSTR(s, color)
         opstr.append(_opstr)
     return opstr
 
@@ -243,7 +248,7 @@ def instruction_tostring(basic_block: vtil.basic_block, it):
     s += ida_lines.COLSTR(f'{ins.base.to_string(ins.access_size()):6}',
                           ida_lines.SCOLOR_INSN)
     s += ' '
-    opstr = pack_operands(ins.operands)
+    opstr = pack_operands(ins)
     if ins.base.name in dict_cond:
         # op0 = op1 cond op2
         s += opstr[0]

@@ -38,6 +38,7 @@ class VMState:
     def decode_emu(self, decoder, ct, reg, size):
         mask = get_mask(size*8)
         reg_key_op = X86_REG_INVALID
+        cached_regs = {}
         if size == 1:
             reg_key_op = get_reg8(self.config.reg_key)
         elif size == 2:
@@ -104,12 +105,29 @@ class VMState:
                     print(decoder)
                     raise NotImplementedError(insn)
                 pt &= mask
+            elif bridge.is64bit() and size == 4:
+                if instr_match(insn, [X86_INS_MOV, X86_INS_MOVABS], [X86_OP_REG, X86_OP_IMM]):
+                    cached_regs[insn.operands[0].reg] = insn.operands[1].imm
+                reg_64 = extend_reg(reg)
+                if reg_64 in regs_write:
+                    if (instr_match(insn, X86_INS_LEA, [X86_OP_REG, X86_OP_MEM], [self.config.reg_ip, {'base': self.config.reg_ip, 'disp': 0, 'scale': 1}]) or
+                        instr_match(insn, X86_INS_LEA, [X86_OP_REG, X86_OP_MEM], [self.config.reg_ip, {'index': self.config.reg_ip, 'disp': 0, 'scale': 1}]) or
+                            instr_match(insn, X86_INS_ADD, [X86_OP_REG, X86_OP_REG], [self.config.reg_ip])):
+                        if insn.id == X86_INS_ADD:
+                            src = insn.operands[1].reg
+                        else:
+                            mem = insn.operands[1].mem
+                            src = mem.index if mem.base == self.config.reg_ip else mem.base
+                        pt += cached_regs.get(src, self.config.rebase)
+                    else:
+                        print('warning decode_emu 64', insn)
+                    pt &= get_mask(64)
             # update key   -> xor reg_key_op, reg
             if instr_match(insn, X86_INS_XOR, [X86_OP_REG, X86_OP_REG], [reg_key_op, reg]):
                 self.key ^= pt & mask
             if instr_match(insn, X86_INS_XOR, [X86_OP_MEM, X86_OP_REG], [None, reg]):
                 self.key ^= pt & mask
-        return pt & mask
+        return pt
 
     def fetch(self, size) -> int:
         i = bridge.read(self.ip, size, self.config.dir)

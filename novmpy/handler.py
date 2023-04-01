@@ -1546,10 +1546,6 @@ class VMInit(VMBase):
     def decode_ip(self, ct, vmstate: VMState):
         v = vmstate.decode_emu(self.ip_decoder, ct,
                                get_reg32(self.config.reg_ip), 4)
-        # FIXME! hardcodes
-        if bridge.is64bit():
-            v += 0x100000000
-            v += vmstate.config.rebase
         v &= get_mask(bridge.size*8)
         return v
 
