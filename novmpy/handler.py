@@ -1495,19 +1495,17 @@ class VMInit(VMBase):
                     op1, op2 = v.operands
                     self.config.rebase = op2.imm
             # mov {vIP}, dword ptr [esp + 0x28] ; decode vIP
-            if instr_match(v, X86_INS_MOV, [X86_OP_REG, X86_OP_MEM]):
-                op1, op2 = v.operands
-                if op1.reg == self.config.reg_ip:
-                    i_decode_ip = i
+            if instr_match(v, X86_INS_MOV, [X86_OP_REG, X86_OP_MEM], [self.config.reg_ip]):
+                i_decode_ip = i
             if instr_match(v, X86_INS_MOV, [X86_OP_REG, X86_OP_REG]):
                 op1, op2 = v.operands
                 # mov {vESP}, esp ;
                 if op2.reg in [X86_REG_ESP, X86_REG_RSP]:
                     self.config.reg_sp = op1.reg
                     i_set_sp = i
-                # mov ebx, {vIP}; set key
-                if op1.reg == self.config.reg_key and op2.reg == self.config.reg_ip:
-                    i_set_key = i
+            # mov ebx, {vIP}; set key
+            if instr_match(v, X86_INS_MOV, [X86_OP_REG, X86_OP_REG], [self.config.reg_key, self.config.reg_ip]):
+                i_set_key = i
             # sub esp({vRegs}), 0xc0
             if instr_match(v, X86_INS_LEA, [X86_OP_REG, X86_OP_MEM]):
                 # lea esp({vRegs}), [esp - 0xc0]
@@ -1521,7 +1519,6 @@ class VMInit(VMBase):
                     if bridge.is64bit() and op2.mem.base == X86_REG_RIP:
                         # x64 <CsInsn :lea rbx, [rip - 7]>
                         self.hbase = v.address + v.size + op2.mem.disp
-                        pass
                     else:
                         self.hbase = op2.mem.disp
         assert(i_decode_ip != -1 and i_set_sp != -1)
@@ -1767,8 +1764,8 @@ def vmentry_parse(addr):
     # call <vm_init>
     insn_x = x86_simple_decode(addr, 5, True)
     if len(insn_x) >= 2:
-        if (instr_match(insn_x[-2], X86_INS_PUSH, {X86_OP_IMM}) and
-                instr_match(insn_x[-1], X86_INS_CALL, {X86_OP_IMM})):
+        if (instr_match(insn_x[-2], X86_INS_PUSH, [X86_OP_IMM]) and
+                instr_match(insn_x[-1], X86_INS_CALL, [X86_OP_IMM])):
             vm_imm = insn_x[-2].operands[0].imm
             vm_init = insn_x[-1].operands[0].imm & get_mask(bridge.size*8)
             vm_unimpl_insn = insn_x[:-2]

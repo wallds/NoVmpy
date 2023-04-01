@@ -352,30 +352,27 @@ def x86_simple_decode(ea, max_insn_count=-1, term_call_imm=False):
 def get_reg8(reg):
     if reg == X86_REG_INVALID:
         return X86_REG_INVALID
-    for i, elems in enumerate(map_reg):
-        for j, elem_j in enumerate(elems):
-            if (elem_j == reg):
-                return elems[4]
+    for elems in map_reg:
+        if reg in elems:
+            return elems[4]
     return X86_REG_INVALID
 
 
 def get_reg16(reg):
     if reg == X86_REG_INVALID:
         return X86_REG_INVALID
-    for i, elems in enumerate(map_reg):
-        for j, elem_j in enumerate(elems):
-            if (elem_j == reg):
-                return elems[2]
+    for elems in map_reg:
+        if reg in elems:
+            return elems[2]
     return X86_REG_INVALID
 
 
 def get_reg32(reg):
     if reg == X86_REG_INVALID:
         return X86_REG_INVALID
-    for i, elems in enumerate(map_reg):
-        for j, elem_j in enumerate(elems):
-            if (elem_j == reg):
-                return elems[1]
+    for elems in map_reg:
+        if reg in elems:
+            return elems[1]
     return X86_REG_INVALID
 
 
@@ -388,10 +385,9 @@ def extend_reg(reg):
 def get_reg64(reg):
     if reg == X86_REG_INVALID:
         return X86_REG_INVALID
-    for i, elems in enumerate(map_reg):
-        for j, elem_j in enumerate(elems):
-            if (elem_j == reg):
-                return elems[0]
+    for elems in map_reg:
+        if reg in elems:
+            return elems[0]
     return X86_REG_INVALID
 
 

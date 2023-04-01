@@ -30,84 +30,6 @@ class _base_graph_action_handler_t(ida_kernwin.action_handler_t):
         return ida_kernwin.AST_ENABLE_FOR_WIDGET
 
 
-class GraphRefresh(_base_graph_action_handler_t):
-    def activate(self, ctx):
-        print('Refresh graph:', self.graph)
-        self.graph.Refresh()
-
-
-class GraphTrace(_base_graph_action_handler_t):
-    def activate(self, ctx):
-        place, _, _ = ida_kernwin.get_custom_viewer_place(
-            ida_graph.get_graph_viewer(self.graph.GetWidget()), False)
-        node_id = ida_graph.viewer_get_curnode(
-            ida_graph.get_graph_viewer(self.graph.GetWidget()))
-        # print(node_id, place.lnnum)
-        if node_id < 0 or place.lnnum < 1:
-            return 0
-        block = None
-        if self.graph.rtn is None:
-            return 0
-        for vip, b in self.graph.rtn.explored_blocks.items():
-            if vip == self.graph.list_vip[node_id]:
-                block = b
-                break
-        if block:
-            it = block.begin()
-            for i in range(place.lnnum - 1):
-                it = it.next()
-            ins = it.get()
-            if not it.get().base.is_branching():
-                it = it.next()
-            tracer = vtil.tracer()
-            for i in ins.operands:
-                if i.is_register() and i.reg() != vtil.REG_IMGBASE:
-                    print(
-                        f'{i} = {tracer.rtrace(vtil.symbolic.variable(it, i.reg())).simplify(True)}')
-        return 0
-
-    def update(self, ctx):
-        return ida_kernwin.AST_ENABLE_FOR_WIDGET
-
-
-class GraphErase(_base_graph_action_handler_t):
-    def activate(self, ctx):
-        place, _, _ = ida_kernwin.get_custom_viewer_place(
-            ida_graph.get_graph_viewer(self.graph.GetWidget()), False)
-        node_id = ida_graph.viewer_get_curnode(
-            ida_graph.get_graph_viewer(self.graph.GetWidget()))
-        # print(node_id, place.lnnum)
-        ln = place.lnnum - 1
-        if node_id < 0 or ln < 0:
-            return 0
-        block = None
-        if self.graph.rtn is None:
-            return 0
-        for vip, b in self.graph.rtn.explored_blocks.items():
-            if vip == self.graph.list_vip[node_id]:
-                block = b
-                break
-        if block:
-            it = block.begin()
-            if block.size() == ln + 1:
-                print('cant erase last instruction')
-                return 0
-            for i in range(ln):
-                it = it.next()
-            global skip_size
-            global bs_size
-            bs_size = 0
-            skip_size = 0
-            msg = ida_lines.tag_remove(instruction_tostring(block, it))
-            if ida_kernwin.ask_yn(ida_kernwin.ASKBTN_NO, f'Erase:\n{msg}') != ida_kernwin.ASKBTN_YES:
-                return 0
-            block.erase(it)
-        return 1
-
-    def update(self, ctx):
-        return ida_kernwin.AST_ENABLE_FOR_WIDGET
-
-
 def ask_list(str_list):
     class ListForm(ida_kernwin.Form):
         def __init__(self, _str_list):
@@ -236,11 +158,10 @@ dict_cond = {
     'tul': 'u<', 'tule': 'u<=',
 }
 
-bs_size = 0
-skip_size = 0
 
-
-def instruction_tostring(basic_block: vtil.basic_block, it):
+def instruction_tostring(basic_block: vtil.basic_block, it, args=None):
+    if args is None:
+        args = dict()
     # @https://github.com/vtil-project/VTIL-BinaryNinja/blob/master/vtil/vtil.py
     ins: vtil.instruction = it.get()
     s = ''
@@ -301,8 +222,8 @@ def instruction_tostring(basic_block: vtil.basic_block, it):
                 comment += '...'
         else:
             comment += ida_name.get_name(imm)
-    global bs_size
-    global skip_size
+    bs_size = args.get('bs_size', 0)
+    skip_size = args.get('skip_size', 0)
     if ins.base == vtil.ins.vemit:
         asm_bytecode = b''
         if bs_size == 0:
@@ -328,6 +249,8 @@ def instruction_tostring(basic_block: vtil.basic_block, it):
     if bs_size >= skip_size or ins.base != vtil.ins.vemit:
         skip_size = 0
         bs_size = 0
+    args['bs_size'] = bs_size
+    args['skip_size'] = skip_size
     if comment:
         s += ida_lines.COLSTR(' ; '+comment, ida_lines.SCOLOR_AUTOCMT)
     return s
@@ -345,6 +268,75 @@ class MyGraph(ida_graph.GraphViewer):
             f"graph_{title}:jumpto", "jumpto", JumptoAction(self), "G", "")
         ida_kernwin.register_action(self.jump_to_desc)
 
+    def Show(self):
+        if not ida_graph.GraphViewer.Show(self):
+            return False
+        ida_graph.viewer_set_titlebar_height(self.GetWidget(), 15)
+        ida_kernwin.attach_action_to_popup(
+            self.GetWidget(), None, self.jump_to_desc.name)
+        self.cmd_refresh = self.AddCommand("Refresh", "")
+        self.cmd_trace = self.AddCommand("Trace", "")
+        self.cmd_patch = self.AddCommand("Patch Instruction", "")
+        self.cmd_erase = self.AddCommand("Erase Instruction", "")
+        self.cmd_hview = self.AddCommand("Handler list", "")
+        return True
+
+    def OnCommand(self, cmd_id):
+        print('OnCommand', cmd_id)
+
+        if cmd_id == self.cmd_refresh:
+            self.Refresh()
+            return 1
+        elif cmd_id == self.cmd_hview:
+            from novmpy.views.hview import show_handler_list_view
+            show_handler_list_view()
+            return 0
+        widget = ida_graph.get_graph_viewer(self.GetWidget())
+        place, _, _ = ida_kernwin.get_custom_viewer_place(widget, False)
+        node_id = ida_graph.viewer_get_curnode(widget)
+        print(node_id, place.lnnum)
+        ln = place.lnnum - 1
+        if node_id < 0 or ln < 0:
+            return 0
+        block = None
+        if self.rtn is None:
+            return 0
+        for vip, b in self.rtn.explored_blocks.items():
+            if vip == self.list_vip[node_id]:
+                block = b
+                break
+        if block:
+            it = block.begin()
+            if cmd_id in [self.cmd_patch, self.cmd_erase] and block.size() == ln + 1:
+                return 0
+            for i in range(ln):
+                it = it.next()
+            ins = it.get()
+            if cmd_id == self.cmd_trace:
+                if not it.get().base.is_branching():
+                    it = it.next()
+                tracer = vtil.tracer()
+                for i in ins.operands:
+                    if i.is_register() and i.reg() != vtil.REG_IMGBASE:
+                        print(
+                            f'{i} = {tracer.rtrace(vtil.symbolic.variable(it, i.reg())).simplify(True)}')
+            elif cmd_id == self.cmd_patch:
+                val = ida_kernwin.ask_long(0, 'patch: mov reg, {imm}')
+                if val is not None and len(ins.operands) >= 2:
+                    ins.base = vtil.ins.mov
+                    op0 = ins.operands[0]
+                    ins.operands = [op0, vtil.make_uint(val, op0.bit_count())]
+                    self.Refresh()
+                    return 1
+            elif cmd_id == self.cmd_erase:
+                msg = ida_lines.tag_remove(instruction_tostring(block, it))
+                if ida_kernwin.ask_yn(ida_kernwin.ASKBTN_NO, f'Erase:\n{msg}') != ida_kernwin.ASKBTN_YES:
+                    return 0
+                block.erase(it)
+                self.Refresh()
+                return 1
+        return 0
+
     def OnActivate(self):
         self.focus = True
 
@@ -357,10 +349,7 @@ class MyGraph(ida_graph.GraphViewer):
         if self.rtn is None:
             return True
         for vip, b in self.rtn.explored_blocks.items():
-            global bs_size
-            global skip_size
-            skip_size = 0
-            bs_size = 0
+            args = {}
             b: vtil.basic_block
             s = hex(vip)+':\n'
             it = b.begin()
@@ -375,7 +364,7 @@ class MyGraph(ida_graph.GraphViewer):
                 _prefix += f'{x:<6} '
                 if ida_ida.inf_show_line_pref():
                     s += ida_lines.COLSTR(_prefix, ida_lines.SCOLOR_PREFIX)
-                s += instruction_tostring(b, it) + '\n'
+                s += instruction_tostring(b, it, args) + '\n'
                 it = it.next()
             color = self.color
             self.AddNode((s.rstrip('\n'), color))
@@ -405,11 +394,9 @@ class MyGraph(ida_graph.GraphViewer):
         return self[node_id]
 
     def OnPopup(self, form, popup_handle):
+        ida_graph.GraphViewer.OnPopup(self, form, popup_handle)
         popup = collections.OrderedDict({
-            'Refresh': GraphRefresh(self),
             'Optimizer': GraphOptimizer(self),
-            'Trace': GraphTrace(self),
-            'Erase': GraphErase(self),
             'Load': GraphLoad(self),
             'Save': GraphSave(self),
         })
@@ -488,10 +475,7 @@ def show_graph(ea):
         g.rtn = lifter.rtn
     if g.Show():
         # jumpto(g.GetWidget(), ida_graph.create_user_graph_place(0,1), 0, 0)
-        ida_graph.viewer_set_titlebar_height(g.GetWidget(), 15)
         # ida_graph.viewer_attach_menu_item(g.GetWidget(), )
-        ida_kernwin.attach_action_to_popup(
-            g.GetWidget(), None, g.jump_to_desc.name)
         return g
     else:
         return None
