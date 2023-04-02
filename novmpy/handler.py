@@ -1175,7 +1175,6 @@ class VMCpuid(VMBase):
     def match(self):
         if len(self.body) < 6:
             return False
-        args = {}
         mh = MatchHelper(self.body, self.config)
         if (mh.load_dword(0, {'reg': 'ph1'}) and
             mh.batch([X86_INS_CPUID]) and
@@ -1184,6 +1183,23 @@ class VMCpuid(VMBase):
                 mh.store_dword(4) and
                 mh.store_dword(0)):
             return True
+        """
+        mov eax, dword ptr [rbx]
+        mov r11, rbx
+        cpuid
+        sub r11, 0xc
+        mov dword ptr [r11 + 0xc], eax
+        mov dword ptr [r11 + 8], ebx
+        mov dword ptr [r11 + 4], ecx
+        mov dword ptr [r11], edx
+        mov rbx, r11
+        """
+        if self.config.reg_sp in [X86_REG_RAX, X86_REG_RBX, X86_REG_RCX, X86_REG_RDX,
+                                  X86_REG_EAX, X86_REG_EBX, X86_REG_ECX, X86_REG_EDX]:
+            mh = MatchHelper(self.body, self.config)
+            if (mh.load_dword(0, {'reg': 'ph1'}) and
+                    mh.batch([X86_INS_CPUID])):
+                return True
         return False
 
     def get_instr(self, vmstate: VMState):
