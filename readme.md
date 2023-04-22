@@ -25,8 +25,7 @@ Copy novmpy&novmpy.py to IDA plugin directory.
 ## Support list
 Version       | x86 | amd64 | arm64
 :------------ | :-------------| :-------------| :-------------
-VMProtect 3.x | :heavy_check_mark: |  :heavy_check_mark: |
-
+VMProtect 3.4~3.6 | :heavy_check_mark: |  :heavy_check_mark: |
 
 # Reference
 
