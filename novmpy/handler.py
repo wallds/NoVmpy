@@ -79,7 +79,7 @@ def size2name(size):
     elif size == 8:
         s = 'qword'
     else:
-        assert(False)
+        assert False
     return s
 
 
@@ -415,12 +415,12 @@ class VMCrc(VMBase):
         return i
 
     def generator(self, ins: VMIns, block: vtil.basic_block):
-        a0, a1 = block.tmp(vtil.arch.bit_count, vtil.arch.bit_count)
-        a2 = block.tmp(32)
-        block.pop(a0)
-        block.pop(a1)
-
-        block.push(a2)
+        size, addr = block.tmp(vtil.arch.bit_count, vtil.arch.bit_count)
+        crc_value = block.tmp(32)
+        block.pop(size)
+        block.pop(addr)
+        block.mov(crc_value, vtil.UNDEFINED)
+        block.push(crc_value)
 
 
 class VMAdd(VMBase):
@@ -1537,7 +1537,7 @@ class VMInit(VMBase):
                         self.hbase = v.address + v.size + op2.mem.disp
                     else:
                         self.hbase = op2.mem.disp
-        assert(i_decode_ip != -1 and i_set_sp != -1)
+        assert i_decode_ip != -1 and i_set_sp != -1
         # parse push list
         m = {}
         self.save_regs = self.body[i_save_regs:i_decode_ip]
@@ -1688,29 +1688,44 @@ class VMInvalid(VMBase):
 
 def hook_code(uc: Uc, address, size, user_data):
     emu = user_data
+    if size > 15: # unicorn sometimes passes in a huge size.
+        print(f'[hook_code] address: 0x{address:08X} size: 0x{size:08X} what?')
+        uc.emu_stop()
+        return
     ins = bridge.disasm_one(address, size)
     sp = uc.reg_read(UC_X86_REG_RSP if bridge.is64bit() else UC_X86_REG_ESP)
     diff_sp = sp-emu.entry_sp
-    # print(f'{address:08X} {diff_sp} {ins.mnemonic} {ins.op_str}')
+    print(f'{address:08X} {diff_sp} {ins.mnemonic} {ins.op_str}')
     if ins.group(CS_GRP_JUMP):
         return
     emu.trace.append((ins, diff_sp))
+    if set(ins.groups) - {X86_GRP_JUMP, X86_GRP_CALL, X86_GRP_RET, X86_GRP_BRANCH_RELATIVE, X86_GRP_MODE32, X86_GRP_MODE64}:
+        _ip = UC_X86_REG_RIP if bridge.is64bit() else UC_X86_REG_EIP
+        uc.reg_write(_ip, address+size)
+        return
     if emu.has_lea_stack and ins.id == X86_INS_CALL and ins.operands[0].type == CS_OP_IMM:
-        if diff_sp < 0:
-            fmt = '<q' if bridge.is64bit() else '<i'
-            emu.vm_imm = struct.unpack(fmt, uc.mem_read(sp, bridge.size))[0]
-            emu.vm_init_addr = ins.operands[0].imm & get_mask(bridge.size*8)
+        emu.last_callee = ins
+        emu.last_diff_sp = diff_sp
+        fmt = '<q' if bridge.is64bit() else '<i'
+        emu.last_imm = struct.unpack(fmt, uc.mem_read(sp, bridge.size))[0]
+    if emu.has_lea_stack and emu.last_callee and emu.last_diff_sp < 0:
+        if (ins.id == X86_INS_MOV and
+            ins.operands[0].type == X86_OP_REG and ins.operands[1].type == X86_OP_REG and
+                ins.operands[1].reg in [X86_REG_ESP, X86_REG_RSP]):
+            emu.vm_imm = emu.last_imm
+            emu.vm_init_addr = emu.last_callee.operands[0].imm & get_mask(
+                bridge.size*8)
 
             for i in range(len(emu.trace)-1, -1, -1):
-                if emu.trace[i][1] == (diff_sp+bridge.size):
+                if emu.trace[i][1] == (emu.last_diff_sp+bridge.size):
                     emu.stub_addr = emu.trace[i][0].address
                     for _ins, _ in emu.trace[:i]:
                         emu.vm_unimpl_insn.append(_ins)
                     emu.success = True
-                    emu.vm_imm2 = ins.address+ins.size
+                    emu.vm_imm2 = emu.last_callee.address+emu.last_callee.size
                     break
-        uc.emu_stop()
-        return
+            uc.emu_stop()
+            return
     if ins.id == X86_INS_LEA and ins.operands[0].reg in [X86_REG_ESP, X86_REG_RSP]:
         emu.has_lea_stack = True
 
@@ -1738,6 +1753,9 @@ def hook_mem_unmapped(uc, access, address, size, value, user_data):
 class Emu():
     def __init__(self):
         self.has_lea_stack = False
+        self.last_callee = None
+        self.last_diff_sp = 0
+        self.last_imm = 0
         self.trace = []
         self.entry_sp = 0x20007F00
         self.vm_imm = 0
@@ -1758,7 +1776,7 @@ class Emu():
 
     def run(self, address):
         try:
-            self.uc.emu_start(address, -1, 0, 80)
+            self.uc.emu_start(address, -1, 0, 200)
         except:
             return False
         return self.success
@@ -1792,7 +1810,7 @@ def vmentry_parse(addr):
                 vmstate.config = h.config
                 vmstate.ip = h.decode_ip(vm_imm, vmstate)
                 vmstate.key = (vmstate.ip-vmstate.config.rebase) & mask
-                return VMEntryParseResult(vmstate, h, insn_x[-2].address, vm_imm, vm_init, vm_unimpl_insn)
+                return VMEntryParseResult(vmstate, h, insn_x[-2].address, vm_imm, insn_x[-1].address+insn_x[-2].size, vm_unimpl_insn)
     # vmp version >= 3.6
     emu = Emu()
     res = emu.run(addr)
