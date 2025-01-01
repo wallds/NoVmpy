@@ -1847,7 +1847,7 @@ class VMJmp(VMBase):
                     if op1.reg in new_sp:
                         new_sp.remove(op1.reg)
                         new_sp.append(op2.reg)
-                    if op2.reg in new_sp:
+                    elif op2.reg in new_sp:
                         new_sp.remove(op2.reg)
                         new_sp.append(op1.reg)
                 elif instr_match(insn, X86_INS_MOV, [X86_OP_REG, X86_OP_REG]):
